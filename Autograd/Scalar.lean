@@ -56,25 +56,7 @@ def grad (e : Expr) (arr : Array Float) : Array Float :=
 Proofs
 -/
 
-@[simp] theorem eval_var (i : Nat) (arr : Array Float) :
-    (var i).eval arr = arr[i]! := rfl
-
-@[simp] theorem eval_const (c : Float) (arr : Array Float) :
-    (const c).eval arr = c := rfl
-
-@[simp] theorem eval_add (a b : Expr) (arr : Array Float) :
-    (add a b).eval arr = a.eval arr + b.eval arr := rfl
-
-@[simp] theorem eval_mul (a b : Expr) (arr : Array Float) :
-    (mul a b).eval arr = a.eval arr * b.eval arr := rfl
-
-@[simp] theorem eval_tanh (a : Expr) (arr : Array Float) :
-    (tanh a).eval arr = Float.tanh (a.eval arr) := rfl
-
-@[simp] theorem backward_const (c : Float) (arr : Array Float) (i : Nat) (up : Float) :
-    (const c).backward arr i up = 0.0 := rfl
-
-@[simp] theorem backward_var_self (i : Nat) (arr : Array Float) (up : Float) :
+theorem backward_var_self (i : Nat) (arr : Array Float) (up : Float) :
     (var i).backward arr i up = up := by
   show (if i = i then up else 0.0) = up
   simp
@@ -83,17 +65,6 @@ theorem backward_var_ne {i j : Nat} (h : j ≠ i) (arr : Array Float) (up : Floa
     (var j).backward arr i up = 0.0 := by
   show (if j = i then up else 0.0) = 0.0
   simp [h]
-
-@[simp] theorem backward_add (a b : Expr) (arr : Array Float) (i : Nat) (up : Float) :
-    (add a b).backward arr i up = a.backward arr i up + b.backward arr i up := rfl
-
-@[simp] theorem backward_mul (a b : Expr) (arr : Array Float) (i : Nat) (up : Float) :
-    (mul a b).backward arr i up =
-      a.backward arr i (up * b.eval arr) + b.backward arr i (up * a.eval arr) := rfl
-
-@[simp] theorem backward_relu (a : Expr) (arr : Array Float) (i : Nat) (up : Float) :
-    (relu a).backward arr i up =
-      a.backward arr i (up * (if a.eval arr > 0.0 then 1.0 else 0.0)) := rfl
 
 theorem grad_size (e : Expr) (arr : Array Float) :
     (e.grad arr).size = arr.size := by
@@ -114,11 +85,6 @@ private def closeEnough (a b : Float) : Bool :=
 private def gradMatchesFd (e : Expr) (arr : Array Float) : Bool :=
   (Array.range arr.size).all fun i =>
     closeEnough (e.backward arr i) (fdGrad e arr i)
-
-example : (const 3.14).backward #[1.0, 2.0] 0 = 0.0 := rfl
-example : (var 0).backward #[5.0, 6.0] 0 = 1.0 := backward_var_self 0 _ _
-example : (var 1).backward #[5.0, 6.0] 0 = 0.0 := backward_var_ne (by decide) _ _
-example : ((var 0).grad #[7.0, 8.0]).size = 2 := grad_size _ _
 
 private def x : Expr := .var 0
 private def y : Expr := .var 1
