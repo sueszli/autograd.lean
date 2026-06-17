@@ -1,7 +1,9 @@
 namespace Autograd.Scalar
 
--- algebraic data type
--- e.g. `x*y + 1` equivalent to `.add (.mul (.var 0) (.var 1)) (.const 1.0)`
+/--
+algebraic data type
+e.g. `arr[0] * arr[1] + 1` equiv to `.add (.mul (.var 0) (.var 1)) (.const 1.0)`
+-/
 inductive Expr where
   | var : Nat → Expr
   | const : Float → Expr
@@ -11,117 +13,112 @@ inductive Expr where
   | tanh : Expr → Expr
   deriving Repr, Inhabited
 
--- allows us to write `e.eval args` instead of `Expr.eval e args`
-namespace Expr
-
-def eval : Expr → Array Float → Float
-  | .var i,  inputs => inputs[i]!
-  | .const c,  _      => c
-  | .add a b,  inputs => a.eval inputs + b.eval inputs
-  | .mul a b,  inputs => a.eval inputs * b.eval inputs
-  | .relu a,   inputs => if a.eval inputs > 0.0 then a.eval inputs else 0.0
-  | .tanh a,   inputs => (a.eval inputs).tanh
-
-def bwd : Expr → Array Float → Nat → Float → Float
-  | .var j,  _,      i, up => if j = i then up else 0.0
-  | .const _,  _,      _, _  => 0.0
-  | .add a b,  inputs, i, up => a.bwd inputs i up + b.bwd inputs i up
-  | .mul a b,  inputs, i, up =>
-      a.bwd inputs i (up * b.eval inputs) + b.bwd inputs i (up * a.eval inputs)
-  | .relu a,   inputs, i, up =>
-      a.bwd inputs i (up * (if a.eval inputs > 0.0 then 1.0 else 0.0))
-  | .tanh a,   inputs, i, up =>
-      let t := (a.eval inputs).tanh
-      a.bwd inputs i (up * (1.0 - t * t))
-
-def backward (e : Expr) (inputs : Array Float) (i : Nat) : Float :=
-  e.bwd inputs i 1.0
-
-def grad (e : Expr) (inputs : Array Float) : Array Float :=
-  (Array.range inputs.size).map (e.backward inputs)
-
+/--
+overload infix operators
+e.g. `x + y` equiv to `.add x y`
+-/
 instance : Add Expr := ⟨.add⟩
 instance : Mul Expr := ⟨.mul⟩
 instance : Neg Expr := ⟨fun a => .mul (.const (-1.0)) a⟩
 
-/-
+namespace Expr
+
+def eval : Expr → Array Float → Float
+  | .var i, arr => arr[i]!
+  | .const c, _ => c
+  | .add a b, arr => a.eval arr + b.eval arr
+  | .mul a b, arr => a.eval arr * b.eval arr
+  | .relu a, arr => if a.eval arr > 0.0 then a.eval arr else 0.0
+  | .tanh a, arr => Float.tanh (a.eval arr)
+
+/--
+one step of the backward pass through a subtree.
+- `arr`: the input values (mul needs them since (a*b)' uses both operands)
+- `i`: which input slot we want the gradient for
+- `up`: gradient flowing in from the parent (root call starts with up = 1.0)
+-/
+def backward (e : Expr) (arr : Array Float) (i : Nat) (up : Float := 1.0) : Float :=
+  match e with
+  | .var j => if j = i then up else 0.0
+  | .const _ => 0.0
+  | .add a b => a.backward arr i up + b.backward arr i up
+  | .mul a b => a.backward arr i (up * b.eval arr) + b.backward arr i (up * a.eval arr)
+  | .relu a => a.backward arr i (up * (if a.eval arr > 0.0 then 1.0 else 0.0))
+  | .tanh a => a.backward arr i (up * (1.0 - Float.tanh (a.eval arr) * Float.tanh (a.eval arr)))
+
+/--
+gradient vector of the same length as arr whose i-th entry is ∂(eval e arr)/∂arr[i]
+-/
+def grad (e : Expr) (arr : Array Float) : Array Float :=
+  (Array.range arr.size).map fun i => e.backward arr i
+
+/-!
 Proofs
 -/
 
-@[simp] theorem eval_var (i : Nat) (inputs : Array Float) :
-    (Expr.var i).eval inputs = inputs[i]! := rfl
+@[simp] theorem eval_var (i : Nat) (arr : Array Float) :
+    (var i).eval arr = arr[i]! := rfl
 
-@[simp] theorem eval_const (c : Float) (inputs : Array Float) :
-    (Expr.const c).eval inputs = c := rfl
+@[simp] theorem eval_const (c : Float) (arr : Array Float) :
+    (const c).eval arr = c := rfl
 
-@[simp] theorem eval_add (a b : Expr) (inputs : Array Float) :
-    (Expr.add a b).eval inputs = a.eval inputs + b.eval inputs := rfl
+@[simp] theorem eval_add (a b : Expr) (arr : Array Float) :
+    (add a b).eval arr = a.eval arr + b.eval arr := rfl
 
-@[simp] theorem eval_mul (a b : Expr) (inputs : Array Float) :
-    (Expr.mul a b).eval inputs = a.eval inputs * b.eval inputs := rfl
+@[simp] theorem eval_mul (a b : Expr) (arr : Array Float) :
+    (mul a b).eval arr = a.eval arr * b.eval arr := rfl
 
-@[simp] theorem eval_tanh (a : Expr) (inputs : Array Float) :
-    (Expr.tanh a).eval inputs = (a.eval inputs).tanh := rfl
+@[simp] theorem eval_tanh (a : Expr) (arr : Array Float) :
+    (tanh a).eval arr = Float.tanh (a.eval arr) := rfl
 
-@[simp] theorem bwd_const (c : Float) (inputs : Array Float) (i : Nat) (up : Float) :
-    (Expr.const c).bwd inputs i up = 0.0 := rfl
+@[simp] theorem backward_const (c : Float) (arr : Array Float) (i : Nat) (up : Float) :
+    (const c).backward arr i up = 0.0 := rfl
 
-@[simp] theorem bwd_var_self (i : Nat) (inputs : Array Float) (up : Float) :
-    (Expr.var i).bwd inputs i up = up := by
+@[simp] theorem backward_var_self (i : Nat) (arr : Array Float) (up : Float) :
+    (var i).backward arr i up = up := by
   show (if i = i then up else 0.0) = up
   simp
 
-theorem bwd_var_ne {i j : Nat} (h : j ≠ i) (inputs : Array Float) (up : Float) :
-    (Expr.var j).bwd inputs i up = 0.0 := by
+theorem backward_var_ne {i j : Nat} (h : j ≠ i) (arr : Array Float) (up : Float) :
+    (var j).backward arr i up = 0.0 := by
   show (if j = i then up else 0.0) = 0.0
   simp [h]
 
-@[simp] theorem bwd_add (a b : Expr) (inputs : Array Float) (i : Nat) (up : Float) :
-    (Expr.add a b).bwd inputs i up = a.bwd inputs i up + b.bwd inputs i up := rfl
+@[simp] theorem backward_add (a b : Expr) (arr : Array Float) (i : Nat) (up : Float) :
+    (add a b).backward arr i up = a.backward arr i up + b.backward arr i up := rfl
 
-@[simp] theorem bwd_mul (a b : Expr) (inputs : Array Float) (i : Nat) (up : Float) :
-    (Expr.mul a b).bwd inputs i up =
-      a.bwd inputs i (up * b.eval inputs) + b.bwd inputs i (up * a.eval inputs) := rfl
+@[simp] theorem backward_mul (a b : Expr) (arr : Array Float) (i : Nat) (up : Float) :
+    (mul a b).backward arr i up =
+      a.backward arr i (up * b.eval arr) + b.backward arr i (up * a.eval arr) := rfl
 
-@[simp] theorem bwd_relu (a : Expr) (inputs : Array Float) (i : Nat) (up : Float) :
-    (Expr.relu a).bwd inputs i up =
-      a.bwd inputs i (up * (if a.eval inputs > 0.0 then 1.0 else 0.0)) := rfl
+@[simp] theorem backward_relu (a : Expr) (arr : Array Float) (i : Nat) (up : Float) :
+    (relu a).backward arr i up =
+      a.backward arr i (up * (if a.eval arr > 0.0 then 1.0 else 0.0)) := rfl
 
-theorem grad_size (e : Expr) (inputs : Array Float) :
-    (e.grad inputs).size = inputs.size := by
+theorem grad_size (e : Expr) (arr : Array Float) :
+    (e.grad arr).size = arr.size := by
   simp [grad]
 
-theorem backward_const (c : Float) (inputs : Array Float) (i : Nat) :
-    (Expr.const c).backward inputs i = 0.0 := rfl
-
-theorem backward_var_self (i : Nat) (inputs : Array Float) :
-    (Expr.var i).backward inputs i = 1.0 := by
-  simp [backward]
-
-theorem backward_var_ne {i j : Nat} (h : j ≠ i) (inputs : Array Float) :
-    (Expr.var j).backward inputs i = 0.0 := by
-  simp [backward, bwd_var_ne h]
-
-/-
+/-!
 Tests
 -/
 
-private def fdGrad (e : Expr) (inputs : Array Float) (i : Nat) (h : Float := 1e-4) : Float :=
-  let plus  := inputs.set! i (inputs[i]! + h)
-  let minus := inputs.set! i (inputs[i]! - h)
+private def fdGrad (e : Expr) (arr : Array Float) (i : Nat) (h : Float := 1e-4) : Float :=
+  let plus  := arr.set! i (arr[i]! + h)
+  let minus := arr.set! i (arr[i]! - h)
   (e.eval plus - e.eval minus) / (2.0 * h)
 
 private def closeEnough (a b : Float) : Bool :=
   (a - b).abs < 1e-3
 
-private def gradMatchesFd (e : Expr) (inputs : Array Float) : Bool :=
-  (Array.range inputs.size).all fun i =>
-    closeEnough (e.backward inputs i) (fdGrad e inputs i)
+private def gradMatchesFd (e : Expr) (arr : Array Float) : Bool :=
+  (Array.range arr.size).all fun i =>
+    closeEnough (e.backward arr i) (fdGrad e arr i)
 
-example : (Expr.const 3.14).backward #[1.0, 2.0] 0 = 0.0 := rfl
-example : (Expr.var 0).backward #[5.0, 6.0] 0 = 1.0 := backward_var_self 0 _
-example : (Expr.var 1).backward #[5.0, 6.0] 0 = 0.0 := backward_var_ne (by decide) _
-example : ((Expr.var 0).grad #[7.0, 8.0]).size = 2 := grad_size _ _
+example : (const 3.14).backward #[1.0, 2.0] 0 = 0.0 := rfl
+example : (var 0).backward #[5.0, 6.0] 0 = 1.0 := backward_var_self 0 _ _
+example : (var 1).backward #[5.0, 6.0] 0 = 0.0 := backward_var_ne (by decide) _ _
+example : ((var 0).grad #[7.0, 8.0]).size = 2 := grad_size _ _
 
 private def x : Expr := .var 0
 private def y : Expr := .var 1
