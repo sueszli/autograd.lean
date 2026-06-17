@@ -11,4 +11,4 @@ Build
 License
 -------
 
-Apache License 2.0. See LICENSE.
+GNU Affero General Public License v3.0. See LICENSE.
