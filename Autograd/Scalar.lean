@@ -1,7 +1,9 @@
 namespace Autograd.Scalar
 
+-- e.g. `x*y + 1`
+-- equivalent to `.add (.mul (.value 0) (.value 1)) (.const 1.0)`
 inductive Expr where
-  | input : Nat → Expr
+  | value : Nat → Expr
   | const : Float → Expr
   | add : Expr → Expr → Expr
   | mul : Expr → Expr → Expr
@@ -12,7 +14,7 @@ inductive Expr where
 namespace Expr
 
 def eval : Expr → Array Float → Float
-  | .input i,  inputs => inputs[i]!
+  | .value i,  inputs => inputs[i]!
   | .const c,  _      => c
   | .add a b,  inputs => a.eval inputs + b.eval inputs
   | .mul a b,  inputs => a.eval inputs * b.eval inputs
@@ -20,7 +22,7 @@ def eval : Expr → Array Float → Float
   | .tanh a,   inputs => (a.eval inputs).tanh
 
 def bwd : Expr → Array Float → Nat → Float → Float
-  | .input j,  _,      i, up => if j = i then up else 0.0
+  | .value j,  _,      i, up => if j = i then up else 0.0
   | .const _,  _,      _, _  => 0.0
   | .add a b,  inputs, i, up => a.bwd inputs i up + b.bwd inputs i up
   | .mul a b,  inputs, i, up =>
@@ -45,8 +47,8 @@ instance : Neg Expr := ⟨fun a => .mul (.const (-1.0)) a⟩
 Proofs
 -/
 
-@[simp] theorem eval_input (i : Nat) (inputs : Array Float) :
-    (Expr.input i).eval inputs = inputs[i]! := rfl
+@[simp] theorem eval_value (i : Nat) (inputs : Array Float) :
+    (Expr.value i).eval inputs = inputs[i]! := rfl
 
 @[simp] theorem eval_const (c : Float) (inputs : Array Float) :
     (Expr.const c).eval inputs = c := rfl
@@ -63,13 +65,13 @@ Proofs
 @[simp] theorem bwd_const (c : Float) (inputs : Array Float) (i : Nat) (up : Float) :
     (Expr.const c).bwd inputs i up = 0.0 := rfl
 
-@[simp] theorem bwd_input_self (i : Nat) (inputs : Array Float) (up : Float) :
-    (Expr.input i).bwd inputs i up = up := by
+@[simp] theorem bwd_value_self (i : Nat) (inputs : Array Float) (up : Float) :
+    (Expr.value i).bwd inputs i up = up := by
   show (if i = i then up else 0.0) = up
   simp
 
-theorem bwd_input_ne {i j : Nat} (h : j ≠ i) (inputs : Array Float) (up : Float) :
-    (Expr.input j).bwd inputs i up = 0.0 := by
+theorem bwd_value_ne {i j : Nat} (h : j ≠ i) (inputs : Array Float) (up : Float) :
+    (Expr.value j).bwd inputs i up = 0.0 := by
   show (if j = i then up else 0.0) = 0.0
   simp [h]
 
@@ -91,13 +93,13 @@ theorem grad_size (e : Expr) (inputs : Array Float) :
 theorem backward_const (c : Float) (inputs : Array Float) (i : Nat) :
     (Expr.const c).backward inputs i = 0.0 := rfl
 
-theorem backward_input_self (i : Nat) (inputs : Array Float) :
-    (Expr.input i).backward inputs i = 1.0 := by
+theorem backward_value_self (i : Nat) (inputs : Array Float) :
+    (Expr.value i).backward inputs i = 1.0 := by
   simp [backward]
 
-theorem backward_input_ne {i j : Nat} (h : j ≠ i) (inputs : Array Float) :
-    (Expr.input j).backward inputs i = 0.0 := by
-  simp [backward, bwd_input_ne h]
+theorem backward_value_ne {i j : Nat} (h : j ≠ i) (inputs : Array Float) :
+    (Expr.value j).backward inputs i = 0.0 := by
+  simp [backward, bwd_value_ne h]
 
 /-
 Tests
@@ -116,13 +118,13 @@ private def gradMatchesFd (e : Expr) (inputs : Array Float) : Bool :=
     closeEnough (e.backward inputs i) (fdGrad e inputs i)
 
 example : (Expr.const 3.14).backward #[1.0, 2.0] 0 = 0.0 := rfl
-example : (Expr.input 0).backward #[5.0, 6.0] 0 = 1.0 := backward_input_self 0 _
-example : (Expr.input 1).backward #[5.0, 6.0] 0 = 0.0 := backward_input_ne (by decide) _
-example : ((Expr.input 0).grad #[7.0, 8.0]).size = 2 := grad_size _ _
+example : (Expr.value 0).backward #[5.0, 6.0] 0 = 1.0 := backward_value_self 0 _
+example : (Expr.value 1).backward #[5.0, 6.0] 0 = 0.0 := backward_value_ne (by decide) _
+example : ((Expr.value 0).grad #[7.0, 8.0]).size = 2 := grad_size _ _
 
-private def x : Expr := .input 0
-private def y : Expr := .input 1
-private def z : Expr := .input 2
+private def x : Expr := .value 0
+private def y : Expr := .value 1
+private def z : Expr := .value 2
 
 example : gradMatchesFd (x + y)          #[1.0, 2.0]         = true := by native_decide
 example : gradMatchesFd (x * y)          #[3.0, 4.0]         = true := by native_decide
