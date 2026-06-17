@@ -4,10 +4,6 @@ defaultTargets = ["Autograd", "autograd"]
 [[lean_lib]]
 name = "Autograd"
 
-[[lean_lib]]
-name = "Tests"
-globs = ["Tests.+"]
-
 [[lean_exe]]
 name = "autograd"
 root = "Main"

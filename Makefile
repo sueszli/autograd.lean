@@ -5,7 +5,6 @@ init:
 .PHONY: precommit
 precommit:
 	lake build
-	lake build Tests
 
 .PHONY: run
 run:

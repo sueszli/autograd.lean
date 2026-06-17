@@ -1,3 +1,3 @@
 import Autograd
 
-def main : IO Unit := IO.println hello
+def main : IO Unit := pure ()
