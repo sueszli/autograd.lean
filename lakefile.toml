@@ -3,6 +3,7 @@ defaultTargets = ["Autograd", "autograd"]
 
 [[lean_lib]]
 name = "Autograd"
+roots = ["Autograd"]
 
 [[lean_exe]]
 name = "autograd"
