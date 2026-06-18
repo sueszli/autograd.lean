@@ -1,9 +1,6 @@
 namespace Autograd.Scalar
 
-/--
-algebraic data type
-e.g. `arr[0] * arr[1] + 1` equiv to `.add (.mul (.var 0) (.var 1)) (.const 1.0)`
--/
+/-- e.g. `arr[0] * arr[1] + 1` equiv to `.add (.mul (.var 0) (.var 1)) (.const 1.0)` -/
 inductive Expr where
   | var : Nat → Expr
   | const : Float → Expr
@@ -13,23 +10,21 @@ inductive Expr where
   | tanh : Expr → Expr
   deriving Repr, Inhabited
 
-/--
-overload infix operators
-e.g. `x + y` equiv to `.add x y`
--/
+/-- e.g. `x + y` equiv to `.add x y`, `-x` equiv to `.mul (.const (-1.0)) x` -/
 instance : Add Expr := ⟨.add⟩
 instance : Mul Expr := ⟨.mul⟩
-instance : Neg Expr := ⟨fun a => .mul (.const (-1.0)) a⟩
+instance : Neg Expr := ⟨.mul (.const (-1.0))⟩
 
 namespace Expr
 
-def eval : Expr → Array Float → Float
-  | .var i, arr => arr[i]!
-  | .const c, _ => c
-  | .add a b, arr => a.eval arr + b.eval arr
-  | .mul a b, arr => a.eval arr * b.eval arr
-  | .relu a, arr => if a.eval arr > 0.0 then a.eval arr else 0.0
-  | .tanh a, arr => Float.tanh (a.eval arr)
+def eval (e : Expr) (arr : Array Float) : Float :=
+  match e with
+  | .var i => arr[i]!
+  | .const c => c
+  | .add a b => a.eval arr + b.eval arr
+  | .mul a b => a.eval arr * b.eval arr
+  | .relu a => if a.eval arr > 0.0 then a.eval arr else 0.0
+  | .tanh a => Float.tanh (a.eval arr)
 
 /--
 one step of the backward pass through a subtree.
@@ -50,24 +45,30 @@ def backward (e : Expr) (arr : Array Float) (i : Nat) (up : Float := 1.0) : Floa
 gradient vector of the same length as arr whose i-th entry is ∂(eval e arr)/∂arr[i]
 -/
 def grad (e : Expr) (arr : Array Float) : Array Float :=
-  (Array.range arr.size).map fun i => e.backward arr i
+  (Array.range arr.size).map λi => e.backward arr i
 
 /-!
 Proofs
 -/
 
-theorem backward_var_self (i : Nat) (arr : Array Float) (up : Float) :
-    (var i).backward arr i up = up := by
+theorem backward_var_self :
+    ∀ (i : Nat) (arr : Array Float) (up : Float),
+      (var i).backward arr i up = up := by
+  intro i _ up
   show (if i = i then up else 0.0) = up
   simp
 
-theorem backward_var_ne {i j : Nat} (h : j ≠ i) (arr : Array Float) (up : Float) :
-    (var j).backward arr i up = 0.0 := by
+theorem backward_var_ne :
+    ∀ {i j : Nat} (_h : j ≠ i) (arr : Array Float) (up : Float),
+      (var j).backward arr i up = 0.0 := by
+  intro i j h _ up
   show (if j = i then up else 0.0) = 0.0
   simp [h]
 
-theorem grad_size (e : Expr) (arr : Array Float) :
-    (e.grad arr).size = arr.size := by
+theorem grad_size :
+    ∀ (e : Expr) (arr : Array Float),
+      (e.grad arr).size = arr.size := by
+  intro e arr
   simp [grad]
 
 /-!
@@ -83,8 +84,7 @@ private def closeEnough (a b : Float) : Bool :=
   (a - b).abs < 1e-3
 
 private def gradMatchesFd (e : Expr) (arr : Array Float) : Bool :=
-  (Array.range arr.size).all fun i =>
-    closeEnough (e.backward arr i) (fdGrad e arr i)
+  (Array.range arr.size).all λi => closeEnough (e.backward arr i) (fdGrad e arr i)
 
 private def x : Expr := .var 0
 private def y : Expr := .var 1
