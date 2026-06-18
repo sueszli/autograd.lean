@@ -43,7 +43,9 @@ def grad (e : Expr) (arr : Array Float) : Array Float :=
   (Array.range arr.size).map λi => e.backward arr i
 
 /-!
+===----------------------------------------------------------------------===
 proofs
+===----------------------------------------------------------------------===
 -/
 
 @[simp] theorem backward_var_match (i : Nat) (arr : Array Float) (up : Float) :
