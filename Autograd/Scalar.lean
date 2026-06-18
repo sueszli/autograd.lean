@@ -1,9 +1,5 @@
 namespace Autograd.Scalar
 
-/--
-algebraic data type for scalar expressions.
-e.g. `arr[0] * arr[1] + 1` equiv to `.add (.mul (.var 0) (.var 1)) (.const 1.0)`
--/
 inductive Expr where
   | var : Nat → Expr
   | const : Float → Expr
@@ -13,10 +9,7 @@ inductive Expr where
   | tanh : Expr → Expr
   deriving Repr, Inhabited
 
-/--
-syntactic sugar for infix operators.
-e.g. `x + y` equiv to `.add x y`, `-x` equiv to `.mul (.const (-1.0)) x`
--/
+-- syntactic sugar for infix ops
 instance : Add Expr := ⟨.add⟩
 instance : Mul Expr := ⟨.mul⟩
 instance : Neg Expr := ⟨.mul (.const (-1.0))⟩
@@ -32,12 +25,10 @@ def eval (e : Expr) (arr : Array Float) : Float :=
   | .relu a => if a.eval arr > 0.0 then a.eval arr else 0.0
   | .tanh a => Float.tanh (a.eval arr)
 
-/--
-one step of the backward pass through a subtree.
-- `arr`: the input values (mul needs them since (a*b)' uses both operands)
-- `i`: which input slot we want the gradient for
-- `up`: gradient flowing in from the parent (root call starts with up = 1.0)
--/
+-- partial derivative of `e` w.r.t. `arr[i]`, via reverse-mode chain rule
+-- `arr`: input values
+-- `i`: index of the variable we are differentiating with respect to
+-- `up`: upstream gradient (chain-rule factor accumulated from the parent)
 def backward (e : Expr) (arr : Array Float) (i : Nat) (up : Float := 1.0) : Float :=
   match e with
   | .var j => if j = i then up else 0.0
@@ -46,6 +37,14 @@ def backward (e : Expr) (arr : Array Float) (i : Nat) (up : Float := 1.0) : Floa
   | .mul a b => a.backward arr i (up * b.eval arr) + b.backward arr i (up * a.eval arr)
   | .relu a => a.backward arr i (up * (if a.eval arr > 0.0 then 1.0 else 0.0))
   | .tanh a => a.backward arr i (up * (1.0 - Float.tanh (a.eval arr) * Float.tanh (a.eval arr)))
+
+-- gradient vector of the same length as arr whose i-th entry is ∂(eval e arr)/∂arr[i]
+def grad (e : Expr) (arr : Array Float) : Array Float :=
+  (Array.range arr.size).map λi => e.backward arr i
+
+/-!
+proofs
+-/
 
 @[simp] theorem backward_var_match (i : Nat) (arr : Array Float) (up : Float) :
     (var i).backward arr i up = up := by
@@ -65,10 +64,6 @@ def backward (e : Expr) (arr : Array Float) (i : Nat) (up : Float := 1.0) : Floa
 
 @[simp] theorem backward_mul (a b : Expr) (arr : Array Float) (i : Nat) (up : Float) :
     (a * b).backward arr i up = a.backward arr i (up * b.eval arr) + b.backward arr i (up * a.eval arr) := rfl
-
-/-- gradient vector of the same length as arr whose i-th entry is ∂(eval e arr)/∂arr[i] -/
-def grad (e : Expr) (arr : Array Float) : Array Float :=
-  (Array.range arr.size).map λi => e.backward arr i
 
 theorem grad_size (e : Expr) (arr : Array Float) :
     (e.grad arr).size = arr.size := by
