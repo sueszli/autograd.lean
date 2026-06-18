@@ -52,11 +52,19 @@ def backward (e : Expr) (arr : Array Float) (i : Nat) (up : Float := 1.0) : Floa
   show (if i = i then up else 0.0) = up
   simp
 
-@[simp] theorem backward_var_no_match {i j : Nat} (h : j ≠ i)
-    (arr : Array Float) (up : Float) :
+@[simp] theorem backward_var_no_match {i j : Nat} (h : j ≠ i) (arr : Array Float) (up : Float) :
     (var j).backward arr i up = 0.0 := by
   show (if j = i then up else 0.0) = 0.0
   simp [h]
+
+@[simp] theorem backward_const (c : Float) (arr : Array Float) (i : Nat) (up : Float) :
+    (Expr.const c).backward arr i up = 0.0 := rfl
+
+@[simp] theorem backward_add (a b : Expr) (arr : Array Float) (i : Nat) (up : Float) :
+    (a + b).backward arr i up = a.backward arr i up + b.backward arr i up := rfl
+
+@[simp] theorem backward_mul (a b : Expr) (arr : Array Float) (i : Nat) (up : Float) :
+    (a * b).backward arr i up = a.backward arr i (up * b.eval arr) + b.backward arr i (up * a.eval arr) := rfl
 
 /-- gradient vector of the same length as arr whose i-th entry is ∂(eval e arr)/∂arr[i] -/
 def grad (e : Expr) (arr : Array Float) : Array Float :=
@@ -66,26 +74,27 @@ theorem grad_size (e : Expr) (arr : Array Float) :
     (e.grad arr).size = arr.size := by
   simp [grad]
 
-private def fdGrad (e : Expr) (arr : Array Float) (i : Nat) (h : Float := 1e-4) : Float :=
-  (e.eval (arr.set! i (arr[i]! + h)) - e.eval (arr.set! i (arr[i]! - h))) / (2.0 * h)
-
-private def matchesFd (e : Expr) (arr : Array Float) : Bool :=
+private def allclose (e : Expr) (arr : Array Float)
+    (h : Float := 1e-4) (atol : Float := 1e-3) : Bool :=
   let g := e.grad arr
-  (Array.range arr.size).all λi => (g[i]! - fdGrad e arr i).abs < 1e-3
+  (Array.range arr.size).all λi =>
+    (g[i]! - (e.eval (arr.set! i (arr[i]! + h)) - e.eval (arr.set! i (arr[i]! - h))) / (2.0 * h)).abs < atol
 
-private def x : Expr := .var 0
-private def y : Expr := .var 1
-private def z : Expr := .var 2
-
-example : matchesFd (x + y)                          #[1.0, 2.0]      := by native_decide
-example : matchesFd (x * y)                          #[3.0, 4.0]      := by native_decide
-example : matchesFd (x*x + y*y)                      #[1.5, -2.5]     := by native_decide
-example : matchesFd ((x + y) * (-y))                 #[1.0, 0.7]      := by native_decide
-example : matchesFd (.relu x)                        #[2.0]           := by native_decide
-example : matchesFd (.relu (-x))                     #[2.0]           := by native_decide
-example : matchesFd (.tanh x)                        #[0.5]           := by native_decide
-example : matchesFd (.tanh (x*y + z))                #[0.3, 0.4, 0.1] := by native_decide
-example : matchesFd (.relu (x*y) + .tanh (x + y))    #[0.6, -0.2]     := by native_decide
+example : allclose (.const 5.0)                                            #[1.0]           := by native_decide
+example : allclose (.var 0 + .var 1)                                       #[1.0, 2.0]      := by native_decide
+example : allclose (.var 0 + .const 5.0)                                   #[2.0]           := by native_decide
+example : allclose (.var 0 * .var 1)                                       #[3.0, 4.0]      := by native_decide
+example : allclose (.var 0 * .var 0 + .var 1 * .var 1)                     #[1.5, -2.5]     := by native_decide
+example : allclose ((.var 0 + .var 1) * (- .var 1))                        #[1.0, 0.7]      := by native_decide
+example : allclose (.var 0 * .var 1 * .var 2)                              #[1.0, 2.0, 0.5] := by native_decide
+example : allclose ((.var 0 + .const 1) * (.var 1 + .const 2))             #[0.5, 1.5]      := by native_decide
+example : allclose (.relu (.var 0))                                        #[2.0]           := by native_decide
+example : allclose (.relu (- .var 0))                                      #[2.0]           := by native_decide
+example : allclose (.tanh (.var 0))                                        #[0.5]           := by native_decide
+example : allclose (.tanh (.tanh (.var 0)))                                #[0.3]           := by native_decide
+example : allclose (.tanh (.var 0 * .var 1 + .var 2))                      #[0.3, 0.4, 0.1] := by native_decide
+example : allclose (.relu (.tanh (.var 0)))                                #[0.4]           := by native_decide
+example : allclose (.relu (.var 0 * .var 1) + .tanh (.var 0 + .var 1))     #[0.6, -0.2]     := by native_decide
 
 end Expr
 
