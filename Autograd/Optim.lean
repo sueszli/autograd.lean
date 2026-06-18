@@ -1,20 +1,16 @@
-import Autograd.Matrix
 import Autograd.Ops
 import Autograd.Tensor
 import Autograd.Model
 
 namespace Autograd
 
--- per-parameter Adam state. Indexed by leaf id; we keep one Matrix per id.
 structure OptState where
-  m : Array (Nat × Matrix)
-  v : Array (Nat × Matrix)
+  m : Array (Nat × Array Float)
+  v : Array (Nat × Array Float)
   deriving Inhabited
 
-private def zerosLike (t : Tensor) : Matrix :=
-  Matrix.zeros t.data.size (Matrix.cols t.data)
+private def zerosLike (t : Tensor) : Array Float := Array.replicate t.data.size 0.0
 
--- enumerate every leaf in `p` once; used to seed Adam state and apply updates.
 private def paramLeaves (p : Params) : Array Tensor := Id.run do
   let mut a : Array Tensor := #[p.wte, p.wpe, p.lmHead]
   for b in p.blocks do
@@ -26,46 +22,44 @@ def OptState.zeros (p : Params) : OptState :=
   let entries := (paramLeaves p).map fun t => (t.id, zerosLike t)
   { m := entries, v := entries }
 
-private def lookup (a : Array (Nat × Matrix)) (id : Nat) (fallback : Matrix) : Matrix :=
+private def lookup (a : Array (Nat × Array Float)) (id : Nat) (fallback : Array Float) : Array Float :=
   match a.find? (fun (i, _) => i = id) with
   | some (_, x) => x
   | none => fallback
 
-private def upsert (a : Array (Nat × Matrix)) (id : Nat) (x : Matrix) : Array (Nat × Matrix) :=
+private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) : Array (Nat × Array Float) :=
   match a.findIdx? (fun (i, _) => i = id) with
   | some i => a.set! i (id, x)
   | none => a.push (id, x)
 
--- one AdamW step on a single param: returns (p', m', v').
-private def adamWMat (cfg : Config) (step : Nat) (lr : Float) (p g m v : Matrix)
-    : Matrix × Matrix × Matrix :=
+-- AdamW step on one flat-storage param. Returns (p', m', v').
+private def adamWBuf (cfg : Config) (step : Nat) (lr : Float)
+    (p g m v : Array Float) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
   let b1t := 1.0 - Float.pow cfg.beta1 t
   let b2t := 1.0 - Float.pow cfg.beta2 t
   let eps : Float := 1e-8
   let n := p.size
-  let cols := if n = 0 then 0 else p[0]!.size
-  let nm : Matrix := (Array.range n).map fun i => (Array.range cols).map fun j =>
-    cfg.beta1 * m[i]![j]! + (1.0 - cfg.beta1) * g[i]![j]!
-  let nv : Matrix := (Array.range n).map fun i => (Array.range cols).map fun j =>
-    cfg.beta2 * v[i]![j]! + (1.0 - cfg.beta2) * g[i]![j]! * g[i]![j]!
-  let np : Matrix := (Array.range n).map fun i => (Array.range cols).map fun j =>
-    (1.0 - lr * cfg.weightDecay) * p[i]![j]! -
-      lr * (nm[i]![j]! / b1t) / (Float.sqrt (nv[i]![j]! / b2t) + eps)
+  let nm : Array Float := (Array.range n).map fun i =>
+    cfg.beta1 * m[i]! + (1.0 - cfg.beta1) * g[i]!
+  let nv : Array Float := (Array.range n).map fun i =>
+    cfg.beta2 * v[i]! + (1.0 - cfg.beta2) * g[i]! * g[i]!
+  let np : Array Float := (Array.range n).map fun i =>
+    (1.0 - lr * cfg.weightDecay) * p[i]! -
+      lr * (nm[i]! / b1t) / (Float.sqrt (nv[i]! / b2t) + eps)
   (np, nm, nv)
 
--- update one leaf tensor by id, returning (new tensor, new state).
 private def stepOne (cfg : Config) (step : Nat) (lr : Float)
-    (t : Tensor) (gm : Array (Nat × Matrix)) (s : OptState) : Tensor × OptState :=
+    (t : Tensor) (gm : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
   let z := zerosLike t
   let g := lookup gm t.id z
   let m := lookup s.m t.id z
   let v := lookup s.v t.id z
-  let (p', m', v') := adamWMat cfg step lr t.data g m v
+  let (p', m', v') := adamWBuf cfg step lr t.data g m v
   ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
 
 def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState)
-    (gm : Array (Nat × Matrix)) : Params × OptState :=
+    (gm : Array (Nat × Array Float)) : Params × OptState :=
   let progress : Float := if cfg.numSteps = 0 then 0.0
                           else (step - 1).toFloat / cfg.numSteps.toFloat
   let lr0 := cfg.lr0 * (1.0 - progress)

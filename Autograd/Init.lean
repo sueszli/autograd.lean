@@ -1,3 +1,4 @@
+import Autograd.Tensor
 import Autograd.Model
 import Autograd.Rng
 import Lean.Data.Json
@@ -6,34 +7,34 @@ namespace Autograd
 
 open Lean (Json)
 
-/-! ## initParams — random init (σ=0.08, per original.py) -/
-
 def initParams (cfg : Config) (rng : RngState) : Params × RngState := Id.run do
   let σ : Float := 0.08
-  let (wte, r1) := rngGaussMat cfg.vocabSize cfg.nEmbed σ rng
-  let (wpe, r2) := rngGaussMat cfg.blockSize cfg.nEmbed σ r1
-  let (lmHead, r3) := rngGaussMat cfg.nEmbed cfg.vocabSize σ r2
+  let mkLeaf (data : Array Float) (rows cols id : Nat) : Tensor :=
+    Tensor.leaf data rows cols id true
+  let (wte, r1) := rngGaussFlat cfg.vocabSize cfg.nEmbed σ rng
+  let (wpe, r2) := rngGaussFlat cfg.blockSize cfg.nEmbed σ r1
+  let (lmHead, r3) := rngGaussFlat cfg.nEmbed cfg.vocabSize σ r2
   let mut r := r3
   let mut blocks : Array TransformerBlock := #[]
   for h in [0:cfg.nLayer] do
-    let (wq, r') := rngGaussMat cfg.nEmbed cfg.nEmbed σ r; r := r'
-    let (wk, r') := rngGaussMat cfg.nEmbed cfg.nEmbed σ r; r := r'
-    let (wv, r') := rngGaussMat cfg.nEmbed cfg.nEmbed σ r; r := r'
-    let (wo, r') := rngGaussMat cfg.nEmbed cfg.nEmbed σ r; r := r'
-    let (fc1, r') := rngGaussMat cfg.nEmbed (4 * cfg.nEmbed) σ r; r := r'
-    let (fc2, r') := rngGaussMat (4 * cfg.nEmbed) cfg.nEmbed σ r; r := r'
+    let (wq, r') := rngGaussFlat cfg.nEmbed cfg.nEmbed σ r; r := r'
+    let (wk, r') := rngGaussFlat cfg.nEmbed cfg.nEmbed σ r; r := r'
+    let (wv, r') := rngGaussFlat cfg.nEmbed cfg.nEmbed σ r; r := r'
+    let (wo, r') := rngGaussFlat cfg.nEmbed cfg.nEmbed σ r; r := r'
+    let (fc1, r') := rngGaussFlat cfg.nEmbed (4 * cfg.nEmbed) σ r; r := r'
+    let (fc2, r') := rngGaussFlat (4 * cfg.nEmbed) cfg.nEmbed σ r; r := r'
     blocks := blocks.push {
-      attnWq := Tensor.leaf wq (ParamIds.attnWq h) true,
-      attnWk := Tensor.leaf wk (ParamIds.attnWk h) true,
-      attnWv := Tensor.leaf wv (ParamIds.attnWv h) true,
-      attnWo := Tensor.leaf wo (ParamIds.attnWo h) true,
-      mlpFc1 := Tensor.leaf fc1 (ParamIds.mlpFc1 h) true,
-      mlpFc2 := Tensor.leaf fc2 (ParamIds.mlpFc2 h) true
+      attnWq := mkLeaf wq cfg.nEmbed cfg.nEmbed (ParamIds.attnWq h),
+      attnWk := mkLeaf wk cfg.nEmbed cfg.nEmbed (ParamIds.attnWk h),
+      attnWv := mkLeaf wv cfg.nEmbed cfg.nEmbed (ParamIds.attnWv h),
+      attnWo := mkLeaf wo cfg.nEmbed cfg.nEmbed (ParamIds.attnWo h),
+      mlpFc1 := mkLeaf fc1 cfg.nEmbed (4 * cfg.nEmbed) (ParamIds.mlpFc1 h),
+      mlpFc2 := mkLeaf fc2 (4 * cfg.nEmbed) cfg.nEmbed (ParamIds.mlpFc2 h)
     }
   return ({
-    wte := Tensor.leaf wte ParamIds.wte true,
-    wpe := Tensor.leaf wpe ParamIds.wpe true,
-    lmHead := Tensor.leaf lmHead ParamIds.lmHead true,
+    wte := mkLeaf wte cfg.vocabSize cfg.nEmbed ParamIds.wte,
+    wpe := mkLeaf wpe cfg.blockSize cfg.nEmbed ParamIds.wpe,
+    lmHead := mkLeaf lmHead cfg.nEmbed cfg.vocabSize ParamIds.lmHead,
     blocks := blocks
   }, r)
 
@@ -54,27 +55,37 @@ private def getObj (j : Json) (k : String) : IO Json :=
   | .ok v => pure v
   | .error e => throw (IO.userError s!"missing key '{k}': {e}")
 
-private def asMatrix (j : Json) : IO Matrix := do
+-- read a 2D nested array and flatten to (rows × cols) Array Float + dims
+private def asRows (j : Json) : IO (Array Float × Nat × Nat) := do
   let rows ← asArr j
-  rows.mapM fun row => do (← asArr row).mapM asFloat
+  let r := rows.size
+  let c : Nat := ← if r = 0 then pure 0
+                   else do let row0 ← asArr rows[0]!; pure row0.size
+  let flat ← rows.foldlM (init := (#[] : Array Float)) fun acc row => do
+    let cols ← asArr row
+    return acc ++ (← cols.mapM asFloat)
+  return (flat, r, c)
 
--- Python stores linear weights [out × in]; my linearFwd wants [in × out].
-private def asMatrixT (j : Json) : IO Matrix := do
-  return Matrix.transpose (← asMatrix j)
+-- Python stores linear weights [out × in]; my linearFwd wants [in × out]. Transpose.
+private def asRowsT (j : Json) : IO (Array Float × Nat × Nat) := do
+  let (flat, r, c) ← asRows j
+  return (transposeFlat flat r c, c, r)
 
--- build a Params record from original.py's weights.json layout.
+private def leafFrom (triple : Array Float × Nat × Nat) (id : Nat) : Tensor :=
+  Tensor.leaf triple.1 triple.2.1 triple.2.2 id true
+
 def paramsFromJson (j : Json) : IO Params := do
   return {
-    wte := Tensor.leaf (← asMatrix (← getObj j "wte")) ParamIds.wte true,
-    wpe := Tensor.leaf (← asMatrix (← getObj j "wpe")) ParamIds.wpe true,
-    lmHead := Tensor.leaf (← asMatrixT (← getObj j "lm_head")) ParamIds.lmHead true,
+    wte    := leafFrom (← asRows  (← getObj j "wte"))    ParamIds.wte,
+    wpe    := leafFrom (← asRows  (← getObj j "wpe"))    ParamIds.wpe,
+    lmHead := leafFrom (← asRowsT (← getObj j "lm_head")) ParamIds.lmHead,
     blocks := #[{
-      attnWq := Tensor.leaf (← asMatrixT (← getObj j "layer0.attn_wq")) (ParamIds.attnWq 0) true,
-      attnWk := Tensor.leaf (← asMatrixT (← getObj j "layer0.attn_wk")) (ParamIds.attnWk 0) true,
-      attnWv := Tensor.leaf (← asMatrixT (← getObj j "layer0.attn_wv")) (ParamIds.attnWv 0) true,
-      attnWo := Tensor.leaf (← asMatrixT (← getObj j "layer0.attn_wo")) (ParamIds.attnWo 0) true,
-      mlpFc1 := Tensor.leaf (← asMatrixT (← getObj j "layer0.mlp_fc1")) (ParamIds.mlpFc1 0) true,
-      mlpFc2 := Tensor.leaf (← asMatrixT (← getObj j "layer0.mlp_fc2")) (ParamIds.mlpFc2 0) true
+      attnWq := leafFrom (← asRowsT (← getObj j "layer0.attn_wq")) (ParamIds.attnWq 0),
+      attnWk := leafFrom (← asRowsT (← getObj j "layer0.attn_wk")) (ParamIds.attnWk 0),
+      attnWv := leafFrom (← asRowsT (← getObj j "layer0.attn_wv")) (ParamIds.attnWv 0),
+      attnWo := leafFrom (← asRowsT (← getObj j "layer0.attn_wo")) (ParamIds.attnWo 0),
+      mlpFc1 := leafFrom (← asRowsT (← getObj j "layer0.mlp_fc1")) (ParamIds.mlpFc1 0),
+      mlpFc2 := leafFrom (← asRowsT (← getObj j "layer0.mlp_fc2")) (ParamIds.mlpFc2 0)
     }]
   }
 

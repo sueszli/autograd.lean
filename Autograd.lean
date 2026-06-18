@@ -1,4 +1,3 @@
-import Autograd.Matrix
 import Autograd.Ops
 import Autograd.Tensor
 import Autograd.Model

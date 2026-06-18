@@ -1,4 +1,3 @@
-import Autograd.Matrix
 import Autograd.Ops
 import Autograd.Tensor
 
@@ -20,7 +19,6 @@ structure Params where
   blocks : Array TransformerBlock
   deriving Inhabited
 
--- canonical leaf ids: 0=wte, 1=wpe, 2=lmHead, then per-block 6 ids starting at 3.
 namespace ParamIds
 def wte : Nat := 0
 def wpe : Nat := 1
@@ -34,11 +32,8 @@ def mlpFc1 (h : Nat) : Nat := blockBase h + 4
 def mlpFc2 (h : Nat) : Nat := blockBase h + 5
 end ParamIds
 
-/-! ## forward — composes Tensor ops; autograd is implicit -/
-
 -- mirrors original.py: rmsnorm-after-emb, per-layer (attn + residual) then (mlp + residual),
--- linear lm_head. Returns the pre-loss logits Tensor so parity-check can read it
--- without traversing into the loss op.
+-- linear lm_head. Returns the pre-loss logits Tensor so parity-check can read it.
 def forwardLogits (p : Params) (cfg : Config) (input : Array Nat) : Tensor :=
   let tokEmb := p.wte.gather input
   let posEmb := p.wpe.gather (Array.range input.size)
@@ -49,7 +44,6 @@ def forwardLogits (p : Params) (cfg : Config) (input : Array Nat) : Tensor :=
     Tensor.mlp cfg xa b.mlpFc1 b.mlpFc2
   x.linear p.lmHead
 
--- full forward including the fused softmax+CE loss
 def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array Float) : Tensor :=
   (forwardLogits p cfg input).maskedCE target mask
 

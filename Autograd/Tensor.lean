@@ -1,26 +1,35 @@
-import Autograd.Matrix
 import Autograd.Ops
 
 namespace Autograd
 
-/-! ## Tensor + GradFn
+/-! ## Tensor + GradFn + autograd-aware forward + backward
 
-Mirrors autograd.c's `struct Tensor { data, shape, requires_grad, grad, grad_fn }`.
-- `data`        : numeric content (2D Matrix; we collapsed shape/strides/ndim to 2D
-                  since microGPT doesn't use higher ranks).
-- `id`          : identifies leaves (params/inputs) so `backward` can return their
-                  accumulated grads in a `Nat → Matrix` map. Pure-functional analog
-                  of mutating each Tensor's `.grad` field in-place.
-- `requiresGrad`: same as autograd.c.
-- `gradFn`      : the op that created this tensor. autograd.c uses a `Function*`
-                  (function pointer + ctx); we use a closed enum with the inputs
-                  and any cached state stored in each variant. Pattern-matching on
-                  it during `backward` is the equivalent of calling `apply(self, …)`.
+Mirrors autograd.c's `struct Tensor`:
+
+    typedef struct Tensor {
+        float32_t *data;   // flat contiguous array, row-major
+        uint64_t *shape;   // dimension sizes
+        uint64_t *strides; // (computed from shape; not stored here)
+        uint64_t ndim;     // == shape.size
+        uint64_t size;     // == ∏ shape
+        bool requires_grad;
+        struct Tensor *grad;
+        Function *grad_fn;
+        uint32_t ref_count;       // Lean GC handles this
+    } Tensor;
+
+Differences from the C version:
+- `grad` isn't a mutating field; `Tensor.backward` returns a `Nat → Array Float`
+  map keyed by leaf `id`. This is the immutable analog of walking the graph and
+  writing into each input tensor's `grad` field.
+- `grad_fn` is a closed `GradFn` enum (not a `Function*` callback); backward
+  pattern-matches on it.
 -/
 
 mutual
 structure Tensor where
-  data : Matrix
+  data : Array Float
+  shape : Array Nat
   id : Nat
   requiresGrad : Bool
   gradFn : GradFn
@@ -33,79 +42,96 @@ inductive GradFn where
   | rmsnormOp (a : Tensor) (rms : Array Float)
   | attnOp   (xPre wq wk wv wo : Tensor) (cache : AttnCache) (cfg : Config)
   | mlpOp    (xPre fc1 fc2 : Tensor) (cache : MlpCache) (cfg : Config)
-  | lossOp   (logits : Tensor) (probs : Matrix) (targets : Array Nat)
+  | lossOp   (logits : Tensor) (probs : Array Float) (targets : Array Nat)
              (mask : Array Float) (sumMask : Float)
 end
 
 instance : Inhabited GradFn := ⟨.leaf⟩
-instance : Inhabited Tensor := ⟨{ data := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
+instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0,
+                                  requiresGrad := false, gradFn := .leaf }⟩
 
--- shorthand for leaf tensors (params, inputs)
-def Tensor.leaf (data : Matrix) (id : Nat := 0) (requiresGrad : Bool := false) : Tensor :=
-  { data := data, id := id, requiresGrad := requiresGrad, gradFn := .leaf }
+namespace Tensor
+def ndim (t : Tensor) : Nat := t.shape.size
+def size (t : Tensor) : Nat := t.shape.foldl (init := 1) (· * ·)
+def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]!
+def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
+def get (t : Tensor) (i j : Nat) : Float := t.data[i * t.cols + j]!
 
-/-! ## Tensor-level forward ops
+def zeros (rows cols : Nat) : Tensor :=
+  { data := Array.replicate (rows * cols) 0.0, shape := #[rows, cols],
+    id := 0, requiresGrad := false, gradFn := .leaf }
 
-Each takes/returns Tensors and records the GradFn so backward can reconstruct
-the gradient flow without re-running the forward.
--/
+def ofFn (rows cols : Nat) (f : Nat → Nat → Float) : Tensor :=
+  { data := (Array.range (rows * cols)).map fun k => f (k / cols) (k % cols),
+    shape := #[rows, cols], id := 0, requiresGrad := false, gradFn := .leaf }
 
-def Tensor.gather (table : Tensor) (ids : Array Nat) : Tensor :=
-  { data := ids.map fun i => table.data[i]!, id := 0,
+def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor :=
+  { data := data, shape := #[rows, cols], id := id,
+    requiresGrad := requiresGrad, gradFn := .leaf }
+
+/-! ## Forward ops — each builds a Tensor and records the GradFn -/
+
+def gather (table : Tensor) (ids : Array Nat) : Tensor :=
+  let cols := table.cols
+  let data : Array Float := Id.run do
+    let mut acc : Array Float := Array.replicate (ids.size * cols) 0.0
+    for i in [0:ids.size] do
+      let id := ids[i]!
+      for j in [0:cols] do
+        acc := acc.set! (i * cols + j) table.data[id * cols + j]!
+    return acc
+  { data := data, shape := #[ids.size, cols], id := 0,
     requiresGrad := table.requiresGrad, gradFn := .gather table ids }
 
-def Tensor.add (a b : Tensor) : Tensor :=
-  { data := madd a.data b.data, id := 0,
+def add (a b : Tensor) : Tensor :=
+  { data := maddFlat a.data b.data, shape := a.shape, id := 0,
     requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }
 
-def Tensor.linear (x w : Tensor) : Tensor :=
-  { data := linearFwd x.data w.data, id := 0,
+-- x (n × k) @ w (k × m) → (n × m)
+def linear (x w : Tensor) : Tensor :=
+  let n := x.rows; let k := x.cols; let m := w.cols
+  { data := linearFwd x.data n k w.data m, shape := #[n, m], id := 0,
     requiresGrad := x.requiresGrad || w.requiresGrad, gradFn := .linearOp x w }
 
-def Tensor.rmsnorm (a : Tensor) (eps : Float) : Tensor :=
-  let (y, rms) := rmsnormFwd a.data eps
-  { data := y, id := 0, requiresGrad := a.requiresGrad, gradFn := .rmsnormOp a rms }
+def rmsnorm (a : Tensor) (eps : Float) : Tensor :=
+  let (y, rms) := rmsnormFwd a.data a.rows a.cols eps
+  { data := y, shape := a.shape, id := 0,
+    requiresGrad := a.requiresGrad, gradFn := .rmsnormOp a rms }
 
-def Tensor.attn (cfg : Config) (xPre wq wk wv wo : Tensor) : Tensor :=
-  let (out, cache) := attnFwd cfg xPre.data wq.data wk.data wv.data wo.data
-  { data := out, id := 0,
+def attn (cfg : Config) (xPre wq wk wv wo : Tensor) : Tensor :=
+  let (out, cache) := attnFwd cfg xPre.data xPre.rows wq.data wk.data wv.data wo.data
+  { data := out, shape := xPre.shape, id := 0,
     requiresGrad := xPre.requiresGrad || wq.requiresGrad || wk.requiresGrad
                     || wv.requiresGrad || wo.requiresGrad,
     gradFn := .attnOp xPre wq wk wv wo cache cfg }
 
-def Tensor.mlp (cfg : Config) (xPre fc1 fc2 : Tensor) : Tensor :=
-  let (out, cache) := mlpFwd cfg xPre.data fc1.data fc2.data
-  { data := out, id := 0,
+def mlp (cfg : Config) (xPre fc1 fc2 : Tensor) : Tensor :=
+  let (out, cache) := mlpFwd cfg xPre.data xPre.rows fc1.data fc2.data
+  { data := out, shape := xPre.shape, id := 0,
     requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad,
     gradFn := .mlpOp xPre fc1 fc2 cache cfg }
 
--- scalar loss. data is a 1×1 matrix so backward can start with [[1.0]].
-def Tensor.maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=
-  let probs := logits.data.map softmax
+-- scalar loss tensor; backward starts from a [1.0] buffer
+def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=
+  let probs := softmaxRows logits.data logits.rows logits.cols
   let sumMask := mask.foldl (init := 0.0) (· + ·)
-  let l := maskedCrossEntropy probs targets mask sumMask
-  { data := #[#[l]], id := 0,
+  let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
+  { data := #[l], shape := #[1, 1], id := 0,
     requiresGrad := logits.requiresGrad,
     gradFn := .lossOp logits probs targets mask sumMask }
 
-/-! ## Backward
+end Tensor
 
-`Tensor.backward(loss)` returns the accumulated gradient for every leaf with
-`requiresGrad=true`, keyed by its `id`. Uses a tiny Array (Nat × Matrix) as the
-map since # of params is small (≤ 9 for 1-layer microGPT). For shared leaves
-(a param used multiple times in forward) the recursive visits add into the same
-slot — same accumulation semantics as autograd.c's `accumulate_grad`.
--/
+/-! ## Backward — walks the immutable graph, returns per-leaf accumulated grads -/
 
-private def gmAdd (gm : Array (Nat × Matrix)) (id : Nat) (g : Matrix) : Array (Nat × Matrix) :=
+private def gmAdd (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float)
+    : Array (Nat × Array Float) :=
   match gm.findIdx? (fun (i, _) => i = id) with
-  | some i => gm.set! i (id, madd gm[i]!.2 g)
+  | some i => gm.set! i (id, maddFlat gm[i]!.2 g)
   | none => gm.push (id, g)
 
--- recursion is over the (acyclic, finite) graph, but Lean's termination checker
--- can't see this without an explicit depth bound. `partial def` is the pragma.
-partial def Tensor.backwardAcc (t : Tensor) (incoming : Matrix)
-    (gm : Array (Nat × Matrix)) : Array (Nat × Matrix) :=
+partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float)
+    (gm : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
   match t.gradFn with
   | .leaf =>
     if t.requiresGrad then gmAdd gm t.id incoming else gm
@@ -113,18 +139,19 @@ partial def Tensor.backwardAcc (t : Tensor) (incoming : Matrix)
     let gm := a.backwardAcc incoming gm
     b.backwardAcc incoming gm
   | .linearOp x w =>
-    let dx := linearBwdX incoming w.data
-    let dw := linearBwdW incoming x.data
+    let n := x.rows; let k := x.cols; let m := w.cols
+    let dx := linearBwdX incoming n m w.data k
+    let dw := linearBwdW incoming n m x.data k
     let gm := x.backwardAcc dx gm
     w.backwardAcc dw gm
   | .rmsnormOp a rms =>
-    a.backwardAcc (rmsnormBwd incoming a.data rms) gm
+    a.backwardAcc (rmsnormBwd incoming a.data rms a.rows a.cols) gm
   | .gather table ids =>
-    let dTable := scatterAdd table.data.size (Matrix.cols table.data) incoming ids
+    let dTable := scatterAddFlat table.rows table.cols incoming ids
     table.backwardAcc dTable gm
   | .attnOp xPre wq wk wv wo cache cfg =>
     let (dxPre, (dWq, dWk, dWv, dWo)) :=
-      attnBwd cfg incoming wq.data wk.data wv.data wo.data cache
+      attnBwd cfg incoming xPre.rows wq.data wk.data wv.data wo.data cache
     let gm := xPre.backwardAcc dxPre gm
     let gm := wq.backwardAcc dWq gm
     let gm := wk.backwardAcc dWk gm
@@ -136,21 +163,12 @@ partial def Tensor.backwardAcc (t : Tensor) (incoming : Matrix)
     let gm := fc1.backwardAcc df1 gm
     fc2.backwardAcc df2 gm
   | .lossOp logits probs targets mask sumMask =>
-    -- scale fused softmax+CE backward by the incoming dLoss
-    let scale := if incoming.size > 0 && incoming[0]!.size > 0 then incoming[0]![0]! else 1.0
-    let dLogits := maskedCrossEntropyBwd probs targets mask sumMask
-    let scaled : Matrix := dLogits.map (·.map (scale * ·))
+    let scale := if incoming.size > 0 then incoming[0]! else 1.0
+    let dLogits := maskedCrossEntropyBwd probs logits.rows logits.cols targets mask sumMask
+    let scaled := dLogits.map (scale * ·)
     logits.backwardAcc scaled gm
 
--- entry point: start with d_loss/d_loss = 1
-def Tensor.backward (loss : Tensor) : Array (Nat × Matrix) :=
-  loss.backwardAcc #[#[1.0]] #[]
-
--- look up a leaf's grad by id; zeros-shape if missing (shouldn't happen for
--- params we actually trained on this step).
-def gradFor (gm : Array (Nat × Matrix)) (id : Nat) (shape : Nat × Nat) : Matrix :=
-  match gm.find? (fun (i, _) => i = id) with
-  | some (_, g) => g
-  | none => Matrix.zeros shape.1 shape.2
+def Tensor.backward (loss : Tensor) : Array (Nat × Array Float) :=
+  loss.backwardAcc #[1.0] #[]
 
 end Autograd
