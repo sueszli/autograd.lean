@@ -58,11 +58,20 @@ def backward (e : Expr) (arr : Array Float) (i : Nat) (up : Float := 1.0) : Floa
   show (if j = i then up else 0.0) = 0.0
   simp [h]
 
+/-- gradient vector of the same length as arr whose i-th entry is ∂(eval e arr)/∂arr[i] -/
+def grad (e : Expr) (arr : Array Float) : Array Float :=
+  (Array.range arr.size).map λi => e.backward arr i
+
+theorem grad_size (e : Expr) (arr : Array Float) :
+    (e.grad arr).size = arr.size := by
+  simp [grad]
+
 private def fdGrad (e : Expr) (arr : Array Float) (i : Nat) (h : Float := 1e-4) : Float :=
   (e.eval (arr.set! i (arr[i]! + h)) - e.eval (arr.set! i (arr[i]! - h))) / (2.0 * h)
 
 private def matchesFd (e : Expr) (arr : Array Float) : Bool :=
-  (Array.range arr.size).all λi => (e.backward arr i - fdGrad e arr i).abs < 1e-3
+  let g := e.grad arr
+  (Array.range arr.size).all λi => (g[i]! - fdGrad e arr i).abs < 1e-3
 
 private def x : Expr := .var 0
 private def y : Expr := .var 1
@@ -77,14 +86,6 @@ example : matchesFd (.relu (-x))                     #[2.0]           := by nati
 example : matchesFd (.tanh x)                        #[0.5]           := by native_decide
 example : matchesFd (.tanh (x*y + z))                #[0.3, 0.4, 0.1] := by native_decide
 example : matchesFd (.relu (x*y) + .tanh (x + y))    #[0.6, -0.2]     := by native_decide
-
-/-- gradient vector of the same length as arr whose i-th entry is ∂(eval e arr)/∂arr[i] -/
-def grad (e : Expr) (arr : Array Float) : Array Float :=
-  (Array.range arr.size).map λi => e.backward arr i
-
-theorem grad_size (e : Expr) (arr : Array Float) :
-    (e.grad arr).size = arr.size := by
-  simp [grad]
 
 end Expr
 
