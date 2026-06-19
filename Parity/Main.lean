@@ -30,10 +30,7 @@ def main : IO Unit := do
     | .ok j => pure j
     | .error e => throw (IO.userError s!"parse: {e}")
   let vocabSize ← asNat (← getObj j "vocab_size")
-  let cfg : Config := {
-    nLayer := 1, nEmbed := 16, blockSize := 16, nHead := 4,
-    vocabSize := vocabSize, numSteps := 1000
-  }
+  let cfg : Config := { nLayer := 1, nEmbed := 16, blockSize := 16, nHead := 4, vocabSize := vocabSize, numSteps := 1000 }
   let inputs ← parseNatRows (← getObj j "inputs")
   let targets ← parseNatRows (← getObj j "targets")
   let masks ← parseFloatRows (← getObj j "masks")
@@ -55,10 +52,7 @@ def main : IO Unit := do
   let atol : Float := 1e-11
   let atolStr := "1e-11"
   let pairs : Array (String × Tensor × Tensor) := Id.run do
-    let mut a : Array (String × Tensor × Tensor) :=
-      #[("wte", p.wte, refP.wte),
-        ("wpe", p.wpe, refP.wpe),
-        ("lm_head", p.lmHead, refP.lmHead)]
+    let mut a : Array (String × Tensor × Tensor) := #[("wte", p.wte, refP.wte), ("wpe", p.wpe, refP.wpe), ("lm_head", p.lmHead, refP.lmHead)]
     for h in [0:cfg.nLayer] do
       let b := p.blocks[h]!
       let r := refP.blocks[h]!

@@ -34,8 +34,7 @@ def encodeDoc (v : Vocab) (doc : String) : Array Nat :=
 
 -- input[0..n−1] = tokens[0..n−1]; target[0..n−1] = tokens[1..n]; mask 1 on real positions.
 -- pad to blockSize with BOS so the forward kernel sees valid indices everywhere.
-def docPair (tokens : Array Nat) (blockSize bos : Nat)
-    : Array Nat × Array Nat × Array Float :=
+def docPair (tokens : Array Nat) (blockSize bos : Nat) : Array Nat × Array Nat × Array Float :=
   let n : Nat := Nat.min blockSize (tokens.size - 1)
   let input : Array Nat := (Array.range blockSize).map fun i =>
     if i < n then tokens[i]! else bos

@@ -15,8 +15,7 @@ private def zerosLike (t : Tensor) : Array Float := Array.replicate t.data.size 
 private def paramLeaves (p : Params) : Array Tensor := Id.run do
   let mut a : Array Tensor := #[p.wte, p.wpe, p.lmHead]
   for b in p.blocks do
-    a := a.push b.attnWq |>.push b.attnWk |>.push b.attnWv |>.push b.attnWo
-            |>.push b.mlpFc1 |>.push b.mlpFc2
+    a := a.push b.attnWq |>.push b.attnWk |>.push b.attnWv |>.push b.attnWo |>.push b.mlpFc1 |>.push b.mlpFc2
   return a
 
 def OptState.zeros (p : Params) : OptState :=
@@ -37,8 +36,7 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
 -- Mirrors sueszli_plain.py's step_fn algebra: precompute `lr_scaled = lr * inv_bias1`
 -- and `inv_bias2 = 1/(1-β₂^t)` once per step, then per-cell
 --   p -= lr_scaled * m / ((v * inv_bias2)^0.5 + eps).
-private def adamWBuf (cfg : Config) (step : Nat) (lr : Float)
-    (p g m v : Array Float) : Array Float × Array Float × Array Float :=
+private def adamWBuf (cfg : Config) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
   let invBias1 := 1.0 / (1.0 - Float.pow cfg.beta1 t)
   let invBias2 := 1.0 / (1.0 - Float.pow cfg.beta2 t)
@@ -55,8 +53,7 @@ private def adamWBuf (cfg : Config) (step : Nat) (lr : Float)
     p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
-private def stepOne (cfg : Config) (step : Nat) (lr : Float)
-    (t : Tensor) (gm : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
+private def stepOne (cfg : Config) (step : Nat) (lr : Float) (t : Tensor) (gm : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
   let z := zerosLike t
   let g := lookup gm t.id z
   let m := lookup s.m t.id z
@@ -64,10 +61,8 @@ private def stepOne (cfg : Config) (step : Nat) (lr : Float)
   let (p', m', v') := adamWBuf cfg step lr t.data g m v
   ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
 
-def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState)
-    (gm : Array (Nat × Array Float)) : Params × OptState :=
-  let progress : Float := if cfg.numSteps = 0 then 0.0
-                          else (step - 1).toFloat / cfg.numSteps.toFloat
+def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState) (gm : Array (Nat × Array Float)) : Params × OptState :=
+  let progress : Float := if cfg.numSteps = 0 then 0.0 else (step - 1).toFloat / cfg.numSteps.toFloat
   let lr0 := cfg.lr0 * (1.0 - progress)
   let lr := if lr0 < 0.0 then 0.0 else lr0
   let (wte', s) := stepOne cfg step lr p.wte gm s
@@ -83,8 +78,7 @@ def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState)
       let (wo, s4) := stepOne cfg step lr b.attnWo gm s'; s' := s4
       let (f1, s5) := stepOne cfg step lr b.mlpFc1 gm s'; s' := s5
       let (f2, s6) := stepOne cfg step lr b.mlpFc2 gm s'; s' := s6
-      acc := acc.push { attnWq := wq, attnWk := wk, attnWv := wv, attnWo := wo,
-                        mlpFc1 := f1, mlpFc2 := f2 }
+      acc := acc.push { attnWq := wq, attnWk := wk, attnWv := wv, attnWo := wo, mlpFc1 := f1, mlpFc2 := f2 }
     return (acc, s')
   ({ wte := wte', wpe := wpe', lmHead := lm', blocks := blocks }, sFinal)
 
