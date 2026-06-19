@@ -41,8 +41,8 @@ inductive GradFn where
   | lossOp    (logits : Tensor) (probs : Array Float) (targets : Array Nat) (mask : Array Float) (sumMask : Float)
 end
 
-instance : Inhabited GradFn := ⟨.leaf⟩
 instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
+instance : Inhabited GradFn := ⟨.leaf⟩
 
 /-!
 ===--------------------------------------------------------------------------===
