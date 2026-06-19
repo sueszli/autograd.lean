@@ -82,13 +82,13 @@ Performance:
 
 Smells to avoid:
 
+- no semicolons. no emdashes. no emojis. no exclamation marks.
+- bullets over paragraphs for lists.
 - punchline sentences. "The wall was always architectural." "Capacity is never the answer." "Then the breakthrough came." dramatic single-clause sentences that try to land. cut or merge.
 - consecutive short sentences used as rhetoric. "It worked. The rollout climbed. Honesty held." reads like a movie trailer. combine into a normal sentence or a bulleted list.
 - "X is the Y of Z" formulations. "perprojs is the breakthrough of Stage 1". just describe what it does.
 - "not just X, it's Y" intensifiers. "not just a fix, it's a redesign". just say what it is.
 - "does not merely X but Y" rhetoric. "does not merely route but separates". same. drop "merely".
 - editorial commentary about the work itself. "This is the deliverable." "The implications are clear." just state facts.
-- no semicolons. no emdashes. no emojis. no exclamation marks.
-- bullets over paragraphs for lists.
 - each chapter is self-contained. no cross-references like "see ch7" or "per the audit above". restate what the reader needs.
 - avoid docstrings where possible. prefer tight technical comments
