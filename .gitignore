@@ -1,5 +1,1 @@
-# cache and other artifacts produced by Lean's Lake build tool
 .lake/
-
-# fetched corpora (run `make data` to populate)
-data/

@@ -34,20 +34,25 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   | none => a.push (id, x)
 
 -- AdamW step on one flat-storage param. Returns (p', m', v').
+-- Mirrors sueszli_plain.py's step_fn algebra: precompute `lr_scaled = lr * inv_bias1`
+-- and `inv_bias2 = 1/(1-β₂^t)` once per step, then per-cell
+--   p -= lr_scaled * m / ((v * inv_bias2)^0.5 + eps).
 private def adamWBuf (cfg : Config) (step : Nat) (lr : Float)
     (p g m v : Array Float) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
-  let b1t := 1.0 - Float.pow cfg.beta1 t
-  let b2t := 1.0 - Float.pow cfg.beta2 t
+  let invBias1 := 1.0 / (1.0 - Float.pow cfg.beta1 t)
+  let invBias2 := 1.0 / (1.0 - Float.pow cfg.beta2 t)
+  let lrScaled := lr * invBias1
+  let oneMinusB1 := 1.0 - cfg.beta1
+  let oneMinusB2 := 1.0 - cfg.beta2
   let eps : Float := 1e-8
   let n := p.size
   let nm : Array Float := (Array.range n).map fun i =>
-    cfg.beta1 * m[i]! + (1.0 - cfg.beta1) * g[i]!
+    cfg.beta1 * m[i]! + oneMinusB1 * g[i]!
   let nv : Array Float := (Array.range n).map fun i =>
-    cfg.beta2 * v[i]! + (1.0 - cfg.beta2) * g[i]! * g[i]!
+    cfg.beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
   let np : Array Float := (Array.range n).map fun i =>
-    (1.0 - lr * cfg.weightDecay) * p[i]! -
-      lr * (nm[i]! / b1t) / (Float.sqrt (nv[i]! / b2t) + eps)
+    p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
 private def stepOne (cfg : Config) (step : Nat) (lr : Float)

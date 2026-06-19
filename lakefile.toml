@@ -1,5 +1,5 @@
 name = "autograd"
-defaultTargets = ["Autograd", "MicroGPT", "autograd"]
+defaultTargets = ["Autograd", "MicroGPT", "parity"]
 
 [[lean_lib]]
 name = "Autograd"
@@ -10,5 +10,5 @@ name = "MicroGPT"
 globs = ["MicroGPT.+"]
 
 [[lean_exe]]
-name = "autograd"
+name = "parity"
 root = "Parity.Main"
