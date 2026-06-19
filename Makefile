@@ -1,6 +1,6 @@
 .PHONY: init
 init:
-	git config core.hooksPath .githooks
+	printf '#!/bin/sh\nmake precommit\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
 .PHONY: precommit
 precommit:
