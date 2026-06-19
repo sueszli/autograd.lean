@@ -73,6 +73,7 @@ Simplicity:
 - avoid OOP primitives like classes and inheritance where possible
 - minimum viable diff. no schedulers, no early stopping, no eval-during-train
 - no shared utility modules. each standalone script duplicates its own boilerplate
+- no line width limit. keep one logical statement on one line. do not split for length
 
 Performance:
 
