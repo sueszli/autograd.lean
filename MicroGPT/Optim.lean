@@ -1,8 +1,9 @@
 import Autograd.Ops
 import Autograd.Tensor
-import Autograd.Model
+import MicroGPT.Model
 
-namespace Autograd
+namespace MicroGPT
+open Autograd
 
 structure OptState where
   m : Array (Nat × Array Float)
@@ -82,4 +83,4 @@ def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState)
     return (acc, s')
   ({ wte := wte', wpe := wpe', lmHead := lm', blocks := blocks }, sFinal)
 
-end Autograd
+end MicroGPT

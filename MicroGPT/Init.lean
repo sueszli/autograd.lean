@@ -1,9 +1,11 @@
+import Autograd.Ops
 import Autograd.Tensor
-import Autograd.Model
-import Autograd.Rng
+import MicroGPT.Model
+import MicroGPT.Rng
 import Lean.Data.Json
 
-namespace Autograd
+namespace MicroGPT
+open Autograd
 
 open Lean (Json)
 
@@ -89,4 +91,4 @@ def paramsFromJson (j : Json) : IO Params := do
     }]
   }
 
-end Autograd
+end MicroGPT

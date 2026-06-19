@@ -1,6 +1,6 @@
-import Autograd.Rng
+import MicroGPT.Rng
 
-namespace Autograd
+namespace MicroGPT
 
 -- char-level vocab. token 0..|chars|−1 are real chars; BOS = chars.size.
 structure Vocab where
@@ -58,4 +58,4 @@ def shuffleDocs (xs : Array String) (st : RngState) : Array String × RngState :
     a := (a.set! i aj).set! j ai
   return (a, s)
 
-end Autograd
+end MicroGPT

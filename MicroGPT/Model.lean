@@ -1,7 +1,8 @@
 import Autograd.Ops
 import Autograd.Tensor
 
-namespace Autograd
+namespace MicroGPT
+open Autograd
 
 structure TransformerBlock where
   attnWq : Tensor
@@ -47,4 +48,4 @@ def forwardLogits (p : Params) (cfg : Config) (input : Array Nat) : Tensor :=
 def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array Float) : Tensor :=
   (forwardLogits p cfg input).maskedCE target mask
 
-end Autograd
+end MicroGPT

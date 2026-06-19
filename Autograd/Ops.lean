@@ -48,15 +48,18 @@ structure MlpCache where
 def transposeFlat (x : Array Float) (r c : Nat) : Array Float :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
--- x (n × k) @ W (k × m) → (n × m)
+-- x (n × k) @ W (k × m) → (n × m). Pre-materializes products into an array,
+-- then sums via foldl. The pre-materialization forces each `x*W` to round to
+-- fp64 before any add, blocking the C backend from contracting into FMA.
+-- CPython doesn't FMA, so without this we diverge by tens of ULPs per dot.
 def linearFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (n * m) 0.0
     for i in [0:n] do
       for j in [0:m] do
-        let mut s : Float := 0.0
-        for kk in [0:k] do s := s + x[i * k + kk]! * W[kk * m + j]!
-        out := out.set! (i * m + j) s
+        let prods : Array Float := (Array.range k).map fun kk =>
+          x[i * k + kk]! * W[kk * m + j]!
+        out := out.set! (i * m + j) (prods.foldl (init := 0.0) (· + ·))
     return out
 
 -- dout (n × m) @ Wᵀ (m × k) → (n × k)
@@ -90,14 +93,15 @@ def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z
 def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
 
--- numerically stable softmax (1-D vector)
+-- numerically stable softmax (1-D vector). The `e * (1/s)` matches Value's
+-- __truediv__ instead of a direct division (`e / s`).
 def softmaxFlat (v : Array Float) : Array Float :=
   if v.size = 0 then v
   else
     let mx := v.foldl (init := v[0]!) fun acc x => if x > acc then x else acc
     let exps := v.map fun x => Float.exp (x - mx)
-    let s := exps.foldl (init := 0.0) (· + ·)
-    exps.map fun e => e / s
+    let invS := 1.0 / exps.foldl (init := 0.0) (· + ·)
+    exps.map fun e => e * invS
 
 -- row-wise softmax over a flat (rows × cols) buffer
 def softmaxRows (x : Array Float) (rows cols : Nat) : Array Float :=
@@ -153,13 +157,14 @@ def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Ar
     return out
 
 -- masked cross-entropy on already-softmaxed `probs` (rows × cols).
+-- Mirrors Python's `(1/n) * sum(losses)` order: reciprocal first, then multiply.
 def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat)
     (mask : Array Float) (sumMask : Float) : Float :=
   let total := (Array.range rows).foldl (init := 0.0) fun acc i =>
     let p := probs[i * cols + targetIds[i]!]!
     let pClamp := if p < 1e-30 then 1e-30 else p
     acc - mask[i]! * Float.log pClamp
-  if sumMask == 0.0 then 0.0 else total / sumMask
+  if sumMask == 0.0 then 0.0 else (1.0 / sumMask) * total
 
 -- fused softmax+CE backward: d_logits[i,c] = mask_i · (probs[i,c] − [c == t_i]) / sumMask
 def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat)
@@ -177,32 +182,40 @@ def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : A
 
 /-! ## Layer kernels -/
 
--- y[i,j] = x[i,j] / sqrt(mean(x[i,:]²) + ε)
+-- Mirrors Python's order to keep bit-equivalence:
+--   ms = sum_of_sq * (1.0/d)          -- Value.__truediv__(d) ⇒ self * d**-1
+--   scale = (ms + eps) ** (-0.5)      -- Value.__pow__ stores pow(...,-0.5)
+--   y_ij = x_ij * scale               -- Value.__mul__
+-- We return (y, rms-per-row) where rms = sqrt(ms+eps) for use in the analytic
+-- rmsnormBwd. The `scale = 1/rms` reciprocal is reconstructed in backward.
 def rmsnormFwd (x : Array Float) (rows cols : Nat) (eps : Float) : Array Float × Array Float :=
-  let rms : Array Float := (Array.range rows).map fun i =>
-    let ms := (Array.range cols).foldl (init := 0.0) fun acc j =>
+  let invD : Float := 1.0 / cols.toFloat
+  let scales : Array Float := (Array.range rows).map fun i =>
+    let sumSq := (Array.range cols).foldl (init := 0.0) fun acc j =>
       let v := x[i * cols + j]!
       acc + v * v
-    Float.sqrt (ms / cols.toFloat + eps)
+    let ms := sumSq * invD
+    Float.pow (ms + eps) (-0.5)
   let y : Array Float := Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
     for i in [0:rows] do
-      let r := rms[i]!
-      for j in [0:cols] do out := out.set! (i * cols + j) (x[i * cols + j]! / r)
+      let s := scales[i]!
+      for j in [0:cols] do out := out.set! (i * cols + j) (x[i * cols + j]! * s)
     return out
-  (y, rms)
+  (y, scales)
 
--- dx_ik = (dy_ik − x_ik · ⟨dy_i, x_i⟩ / (d · rms_i²)) / rms_i
-def rmsnormBwd (dy x : Array Float) (rms : Array Float) (rows cols : Nat) : Array Float :=
+-- Cache now stores `scale_i = 1/√(ms_i + ε)` (not `√(ms_i + ε)`). With s = scale:
+--   dx_ik = s · (dy_ik − x_ik · ⟨dy_i, x_i⟩ · s² / d)
+def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Array Float :=
   let dF := cols.toFloat
   Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
     for i in [0:rows] do
-      let r := rms[i]!
+      let s := scale[i]!
       let mut dot : Float := 0.0
       for j in [0:cols] do dot := dot + dy[i * cols + j]! * x[i * cols + j]!
       for j in [0:cols] do
-        let g := (dy[i * cols + j]! - x[i * cols + j]! * dot / (dF * r * r)) / r
+        let g := s * (dy[i * cols + j]! - x[i * cols + j]! * dot * s * s / dF)
         out := out.set! (i * cols + j) g
     return out
 
@@ -217,7 +230,8 @@ def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let ks := splitHeadsFlat kFlat rows cols cfg.nHead
   let vs := splitHeadsFlat vFlat rows cols cfg.nHead
   let headDim := cols / cfg.nHead
-  let invSqrt := 1.0 / Float.sqrt headDim.toFloat
+  -- Mirror Value.__truediv__: precompute `1/√d` then multiply per element.
+  let invScale := 1.0 / Float.pow headDim.toFloat 0.5
   let (aws, outs) : Array (Array Float) × Array (Array Float) := Id.run do
     let mut aws : Array (Array Float) := #[]
     let mut outs : Array (Array Float) := #[]
@@ -225,7 +239,7 @@ def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Arra
       let q := qs[h]!; let k := ks[h]!; let v := vs[h]!
       let kT := transposeFlat k rows headDim
       let scores := linearFwd q rows headDim kT rows
-      let scaled : Array Float := scores.map (invSqrt * ·)
+      let scaled : Array Float := scores.map (· * invScale)
       let masked : Array Float := Id.run do
         let mut acc : Array Float := Array.replicate (rows * rows) 0.0
         for i in [0:rows] do
@@ -250,7 +264,8 @@ def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let dWo := linearBwdW dout rows cols c.outFlat cols
   let headDim := cols / cfg.nHead
   let dOutHeads := splitHeadsFlat dMerged rows cols cfg.nHead
-  let invSqrt := 1.0 / Float.sqrt headDim.toFloat
+  -- backward uses 1/√d as the scale factor folded into softmaxRowsBwd
+  let invSqrt := 1.0 / Float.pow headDim.toFloat 0.5
   let (dqs, dks, dvs) : Array (Array Float) × Array (Array Float) × Array (Array Float) := Id.run do
     let mut dqs : Array (Array Float) := #[]
     let mut dks : Array (Array Float) := #[]

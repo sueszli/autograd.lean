@@ -1,4 +1,4 @@
-namespace Autograd
+namespace MicroGPT
 
 structure RngState where s : UInt64 deriving Inhabited
 
@@ -23,4 +23,4 @@ def rngGaussFlat (r c : Nat) (σ : Float) (st : RngState) : Array Float × RngSt
     acc := acc.push x; s := s'
   return (acc, s)
 
-end Autograd
+end MicroGPT
