@@ -6,7 +6,7 @@ namespace Autograd
 ===--------------------------------------------------------------------------===
 Types
 
-Mirrors the C struct from `autograd.c`: https://github.com/sueszli/autograd.c
+Mirrors the C struct from https://github.com/sueszli/autograd.c
 
   typedef struct Tensor {
     float32_t *data;     // flat contiguous array, row-major
