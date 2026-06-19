@@ -32,9 +32,14 @@ AdamW
 ===--------------------------------------------------------------------------===
 -/
 
--- AdamW hyperparameters in `Config` (`beta1`, `beta2`, `lr0`) plus init `σ` in `initParams` were grid-searched for bit-exact parity with the Python reference.
+-- `beta1`, `beta2` and `lr0` (in the model's Config) plus init `σ` were grid-searched for bit-exact parity with the Python reference.
 
-def adamWBuf (cfg : Config) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
+structure AdamWConfig where
+  beta1 : Float := 0.85
+  beta2 : Float := 0.99
+  deriving Inhabited
+
+def adamWBuf (cfg : AdamWConfig) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
   let invBias1 := 1.0 / (1.0 - Float.pow cfg.beta1 t)
   let invBias2 := 1.0 / (1.0 - Float.pow cfg.beta2 t)
@@ -51,7 +56,7 @@ def adamWBuf (cfg : Config) (step : Nat) (lr : Float) (p g m v : Array Float) : 
     p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
-def stepOne (cfg : Config) (step : Nat) (lr : Float) (t : Tensor) (gm : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
+def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gm : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
   let z := zerosLike t
   let g := lookup gm t.id z
   let m := lookup s.m t.id z

@@ -36,8 +36,8 @@ inductive GradFn where
   | addOp     (a b : Tensor)
   | linearOp  (x w : Tensor)
   | rmsnormOp (a : Tensor) (rms : Array Float)
-  | attnOp    (xPre wq wk wv wo : Tensor) (cache : AttnCache) (cfg : Config)
-  | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache) (cfg : Config)
+  | attnOp    (xPre wq wk wv wo : Tensor) (cache : AttnCache) (cfg : AttnConfig)
+  | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache) (cfg : MlpConfig)
   | lossOp    (logits : Tensor) (probs : Array Float) (targets : Array Nat) (mask : Array Float) (sumMask : Float)
 end
 
@@ -86,11 +86,11 @@ def rmsnorm (a : Tensor) (eps : Float) : Tensor :=
   let (y, rms) := rmsnormFwd a.data a.rows a.cols eps
   { data := y, shape := a.shape, id := 0, requiresGrad := a.requiresGrad, gradFn := .rmsnormOp a rms }
 
-def attn (cfg : Config) (xPre wq wk wv wo : Tensor) : Tensor :=
+def attn (cfg : AttnConfig) (xPre wq wk wv wo : Tensor) : Tensor :=
   let (out, cache) := attnFwd cfg xPre.data xPre.rows wq.data wk.data wv.data wo.data
   { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || wq.requiresGrad || wk.requiresGrad || wv.requiresGrad || wo.requiresGrad, gradFn := .attnOp xPre wq wk wv wo cache cfg }
 
-def mlp (cfg : Config) (xPre fc1 fc2 : Tensor) : Tensor :=
+def mlp (cfg : MlpConfig) (xPre fc1 fc2 : Tensor) : Tensor :=
   let (out, cache) := mlpFwd cfg xPre.data xPre.rows fc1.data fc2.data
   { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache cfg }
 

@@ -2,50 +2,6 @@ namespace Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-Types
-===--------------------------------------------------------------------------===
--/
-
-structure Config where
-  nLayer : Nat
-  nEmbed : Nat
-  blockSize : Nat
-  nHead : Nat
-  vocabSize : Nat
-  numSteps : Nat
-  epsilon : Float := 1e-5
-  lr0 : Float := 0.01
-  beta1 : Float := 0.85
-  beta2 : Float := 0.99
-  maskValue : Float := -1.0e9
-  deriving Inhabited
-
-structure AttnCache where
-  xPre : Array Float
-  xPreRows : Nat
-  xPreCols : Nat
-  xn : Array Float
-  rms : Array Float
-  q : Array (Array Float)
-  k : Array (Array Float)
-  v : Array (Array Float)
-  attnW : Array (Array Float)
-  outFlat : Array Float
-  deriving Inhabited
-
-structure MlpCache where
-  xPre : Array Float
-  xn : Array Float
-  rows : Nat
-  cols : Nat
-  rms : Array Float
-  hPre : Array Float
-  h : Array Float
-  hidden : Nat
-  deriving Inhabited
-
-/-!
-===--------------------------------------------------------------------------===
 Linear
 ===--------------------------------------------------------------------------===
 -/
@@ -241,7 +197,27 @@ Attention
 ===--------------------------------------------------------------------------===
 -/
 
-def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
+structure AttnConfig where
+  nEmbed : Nat
+  nHead : Nat
+  epsilon : Float := 1e-5
+  maskValue : Float := -1.0e9
+  deriving Inhabited
+
+structure AttnCache where
+  xPre : Array Float
+  xPreRows : Nat
+  xPreCols : Nat
+  xn : Array Float
+  rms : Array Float
+  q : Array (Array Float)
+  k : Array (Array Float)
+  v : Array (Array Float)
+  attnW : Array (Array Float)
+  outFlat : Array Float
+  deriving Inhabited
+
+def attnFwd (cfg : AttnConfig) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
   let cols := cfg.nEmbed
   let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
   let qFlat := linearFwd xn rows cols wq cols
@@ -276,7 +252,7 @@ def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let outRes := maddFlat xPre outFlat
   (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
 
-def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
+def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
   let cols := cfg.nEmbed
   let dMerged := linearBwdX dout rows cols wo cols
   let dWo := linearBwdW dout rows cols c.outFlat cols
@@ -325,7 +301,23 @@ MLP
 ===--------------------------------------------------------------------------===
 -/
 
-def mlpFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) : Array Float × MlpCache :=
+structure MlpConfig where
+  nEmbed : Nat
+  epsilon : Float := 1e-5
+  deriving Inhabited
+
+structure MlpCache where
+  xPre : Array Float
+  xn : Array Float
+  rows : Nat
+  cols : Nat
+  rms : Array Float
+  hPre : Array Float
+  h : Array Float
+  hidden : Nat
+  deriving Inhabited
+
+def mlpFwd (cfg : MlpConfig) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) : Array Float × MlpCache :=
   let cols := cfg.nEmbed
   let hidden := 4 * cols
   let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
