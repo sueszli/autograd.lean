@@ -79,6 +79,12 @@ Performance:
 
 - have mechanistic sympathy, design with data oriented programming best-practices
 
+Comments:
+
+- comments give overview/context, not detail. keep only non-obvious WHY (parity, invariants). drop signature/formula restatements
+- backtick code references in comments (identifiers, formulas, shape notation)
+- section headers: `/-!` + 80-wide `===---...---===` rule + plain title + same rule + `-/`. title-only by default. overrides "no heavy dividers"
+
 # Writing Guidelines
 
 Smells to avoid:

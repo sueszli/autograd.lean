@@ -1,16 +1,16 @@
 import Autograd.Ops
 import Autograd.Tensor
+import Autograd.Optim
 import MicroGPT.Model
 
 namespace MicroGPT
 open Autograd
 
-structure OptState where
-  m : Array (Nat × Array Float)
-  v : Array (Nat × Array Float)
-  deriving Inhabited
-
-private def zerosLike (t : Tensor) : Array Float := Array.replicate t.data.size 0.0
+/-!
+===--------------------------------------------------------------------------===
+Params walker
+===--------------------------------------------------------------------------===
+-/
 
 private def paramLeaves (p : Params) : Array Tensor := Id.run do
   let mut a : Array Tensor := #[p.wte, p.wpe, p.lmHead]
@@ -21,45 +21,6 @@ private def paramLeaves (p : Params) : Array Tensor := Id.run do
 def OptState.zeros (p : Params) : OptState :=
   let entries := (paramLeaves p).map fun t => (t.id, zerosLike t)
   { m := entries, v := entries }
-
-private def lookup (a : Array (Nat × Array Float)) (id : Nat) (fallback : Array Float) : Array Float :=
-  match a.find? (fun (i, _) => i = id) with
-  | some (_, x) => x
-  | none => fallback
-
-private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) : Array (Nat × Array Float) :=
-  match a.findIdx? (fun (i, _) => i = id) with
-  | some i => a.set! i (id, x)
-  | none => a.push (id, x)
-
--- AdamW step on one flat-storage param. Returns (p', m', v').
--- Mirrors sueszli_plain.py's step_fn algebra: precompute `lr_scaled = lr * inv_bias1`
--- and `inv_bias2 = 1/(1-β₂^t)` once per step, then per-cell
---   p -= lr_scaled * m / ((v * inv_bias2)^0.5 + eps).
-private def adamWBuf (cfg : Config) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
-  let t := step.toFloat
-  let invBias1 := 1.0 / (1.0 - Float.pow cfg.beta1 t)
-  let invBias2 := 1.0 / (1.0 - Float.pow cfg.beta2 t)
-  let lrScaled := lr * invBias1
-  let oneMinusB1 := 1.0 - cfg.beta1
-  let oneMinusB2 := 1.0 - cfg.beta2
-  let eps : Float := 1e-8
-  let n := p.size
-  let nm : Array Float := (Array.range n).map fun i =>
-    cfg.beta1 * m[i]! + oneMinusB1 * g[i]!
-  let nv : Array Float := (Array.range n).map fun i =>
-    cfg.beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
-  let np : Array Float := (Array.range n).map fun i =>
-    p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
-  (np, nm, nv)
-
-private def stepOne (cfg : Config) (step : Nat) (lr : Float) (t : Tensor) (gm : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
-  let z := zerosLike t
-  let g := lookup gm t.id z
-  let m := lookup s.m t.id z
-  let v := lookup s.v t.id z
-  let (p', m', v') := adamWBuf cfg step lr t.data g m v
-  ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
 
 def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState) (gm : Array (Nat × Array Float)) : Params × OptState :=
   let progress : Float := if cfg.numSteps = 0 then 0.0 else (step - 1).toFloat / cfg.numSteps.toFloat

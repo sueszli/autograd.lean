@@ -1,9 +1,10 @@
 namespace Autograd
 
-/-! Numeric kernels — all operate on flat `Array Float` storage with explicit
-dimension arguments, matching `autograd.c`'s `float32_t*` + `shape` style.
-Config + cache types live here because Tensor.lean's `GradFn` references them
-and must import this module. -/
+/-!
+===--------------------------------------------------------------------------===
+Types
+===--------------------------------------------------------------------------===
+-/
 
 structure Config where
   nLayer : Nat
@@ -16,7 +17,6 @@ structure Config where
   lr0 : Float := 0.01
   beta1 : Float := 0.85
   beta2 : Float := 0.99
-  weightDecay : Float := 0.0
   maskValue : Float := -1.0e9
   deriving Inhabited
 
@@ -44,14 +44,16 @@ structure MlpCache where
   hidden : Nat
   deriving Inhabited
 
--- helper: transpose (r × c) → (c × r) into a fresh flat array
+/-!
+===--------------------------------------------------------------------------===
+Linear
+===--------------------------------------------------------------------------===
+-/
+
 def transposeFlat (x : Array Float) (r c : Nat) : Array Float :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
--- x (n × k) @ W (k × m) → (n × m). Pre-materializes products into an array,
--- then sums via foldl. The pre-materialization forces each `x*W` to round to
--- fp64 before any add, blocking the C backend from contracting into FMA.
--- CPython doesn't FMA, so without this we diverge by tens of ULPs per dot.
+-- pre-materialize `x*W` products so the C backend can't contract them into FMA. CPython doesn't FMA, so without this we diverge by tens of ULPs per dot.
 def linearFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (n * m) 0.0
@@ -62,7 +64,6 @@ def linearFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array 
         out := out.set! (i * m + j) (prods.foldl (init := 0.0) (· + ·))
     return out
 
--- dout (n × m) @ Wᵀ (m × k) → (n × k)
 def linearBwdX (dout : Array Float) (n m : Nat) (W : Array Float) (k : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (n * k) 0.0
@@ -73,7 +74,6 @@ def linearBwdX (dout : Array Float) (n m : Nat) (W : Array Float) (k : Nat) : Ar
         out := out.set! (i * k + kk) s
     return out
 
--- xᵀ (k × n) @ dout (n × m) → (k × m)
 def linearBwdW (dout : Array Float) (n m : Nat) (x : Array Float) (k : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (k * m) 0.0
@@ -84,7 +84,12 @@ def linearBwdW (dout : Array Float) (n m : Nat) (x : Array Float) (k : Nat) : Ar
         out := out.set! (kk * m + j) s
     return out
 
--- elementwise add
+/-!
+===--------------------------------------------------------------------------===
+Element-wise
+===--------------------------------------------------------------------------===
+-/
+
 def maddFlat (a b : Array Float) : Array Float :=
   (Array.range a.size).map fun i => a[i]! + b[i]!
 
@@ -93,8 +98,13 @@ def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z
 def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
 
--- numerically stable softmax (1-D vector). The `e * (1/s)` matches Value's
--- __truediv__ instead of a direct division (`e / s`).
+/-!
+===--------------------------------------------------------------------------===
+Softmax
+===--------------------------------------------------------------------------===
+-/
+
+-- `e * (1/s)` (not `e / s`) mirrors Python's `Value.__truediv__` for bit-exact parity.
 def softmaxFlat (v : Array Float) : Array Float :=
   if v.size = 0 then v
   else
@@ -103,7 +113,6 @@ def softmaxFlat (v : Array Float) : Array Float :=
     let invS := 1.0 / exps.foldl (init := 0.0) (· + ·)
     exps.map fun e => e * invS
 
--- row-wise softmax over a flat (rows × cols) buffer
 def softmaxRows (x : Array Float) (rows cols : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
@@ -113,7 +122,6 @@ def softmaxRows (x : Array Float) (rows cols : Nat) : Array Float :=
       for j in [0:cols] do out := out.set! (i * cols + j) sm[j]!
     return out
 
--- aw, daw : (rows × cols). returns scale · aw_ij · (daw_ij − ⟨aw_i, daw_i⟩).
 def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
@@ -125,7 +133,12 @@ def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Ar
         out := out.set! (i * cols + j) g
     return out
 
--- split (n × dModel) into nHead flat slices each (n × headDim)
+/-!
+===--------------------------------------------------------------------------===
+Multi-head
+===--------------------------------------------------------------------------===
+-/
+
 def splitHeadsFlat (x : Array Float) (n dModel nHead : Nat) : Array (Array Float) :=
   let headDim := dModel / nHead
   (Array.range nHead).map fun h =>
@@ -135,7 +148,6 @@ def splitHeadsFlat (x : Array Float) (n dModel nHead : Nat) : Array (Array Float
         for j in [0:headDim] do acc := acc.set! (i * headDim + j) x[i * dModel + h * headDim + j]!
       return acc
 
--- concat nHead flat (n × headDim) → (n × dModel)
 def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Float :=
   let dModel := nHead * headDim
   Id.run do
@@ -146,7 +158,12 @@ def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Fl
         out := out.set! (i * dModel + col) xs[h]![i * headDim + j]!
     return out
 
--- accumulate row gradients into a zeros table by index (embedding backward)
+/-!
+===--------------------------------------------------------------------------===
+Embedding scatter
+===--------------------------------------------------------------------------===
+-/
+
 def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
@@ -156,8 +173,13 @@ def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Ar
         out := out.set! (id * cols + j) (out[id * cols + j]! + grad[i * cols + j]!)
     return out
 
--- masked cross-entropy on already-softmaxed `probs` (rows × cols).
--- Mirrors Python's `(1/n) * sum(losses)` order: reciprocal first, then multiply.
+/-!
+===--------------------------------------------------------------------------===
+Cross-entropy
+===--------------------------------------------------------------------------===
+-/
+
+-- `(1/n) * sum(losses)` order (reciprocal first) mirrors Python for bit-exact parity.
 def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat) (mask : Array Float) (sumMask : Float) : Float :=
   let total := (Array.range rows).foldl (init := 0.0) fun acc i =>
     let p := probs[i * cols + targetIds[i]!]!
@@ -165,7 +187,6 @@ def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Arra
     acc - mask[i]! * Float.log pClamp
   if sumMask == 0.0 then 0.0 else (1.0 / sumMask) * total
 
--- fused softmax+CE backward: d_logits[i,c] = mask_i · (probs[i,c] − [c == t_i]) / sumMask
 def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat) (mask : Array Float) (sumMask : Float) : Array Float :=
   let inv := if sumMask == 0.0 then 0.0 else 1.0 / sumMask
   Id.run do
@@ -178,14 +199,13 @@ def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : A
         out := out.set! (i * cols + c) (m * (probs[i * cols + c]! - onehot) * inv)
     return out
 
-/-! ## Layer kernels -/
+/-!
+===--------------------------------------------------------------------------===
+RMS norm
+===--------------------------------------------------------------------------===
+-/
 
--- Mirrors Python's order to keep bit-equivalence:
---   ms = sum_of_sq * (1.0/d)          -- Value.__truediv__(d) ⇒ self * d**-1
---   scale = (ms + eps) ** (-0.5)      -- Value.__pow__ stores pow(...,-0.5)
---   y_ij = x_ij * scale               -- Value.__mul__
--- We return (y, rms-per-row) where rms = sqrt(ms+eps) for use in the analytic
--- rmsnormBwd. The `scale = 1/rms` reciprocal is reconstructed in backward.
+-- `ms`/`scale`/`y` order matches Python's `Value.__truediv__/__pow__/__mul__` for bit-exact parity. Cache stores `scale = 1/√(ms+ε)`, backward reconstructs from there.
 def rmsnormFwd (x : Array Float) (rows cols : Nat) (eps : Float) : Array Float × Array Float :=
   let invD : Float := 1.0 / cols.toFloat
   let scales : Array Float := (Array.range rows).map fun i =>
@@ -202,8 +222,6 @@ def rmsnormFwd (x : Array Float) (rows cols : Nat) (eps : Float) : Array Float �
     return out
   (y, scales)
 
--- Cache now stores `scale_i = 1/√(ms_i + ε)` (not `√(ms_i + ε)`). With s = scale:
---   dx_ik = s · (dy_ik − x_ik · ⟨dy_i, x_i⟩ · s² / d)
 def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Array Float :=
   let dF := cols.toFloat
   Id.run do
@@ -217,6 +235,12 @@ def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Ar
         out := out.set! (i * cols + j) g
     return out
 
+/-!
+===--------------------------------------------------------------------------===
+Attention
+===--------------------------------------------------------------------------===
+-/
+
 def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
   let cols := cfg.nEmbed
   let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
@@ -227,7 +251,6 @@ def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let ks := splitHeadsFlat kFlat rows cols cfg.nHead
   let vs := splitHeadsFlat vFlat rows cols cfg.nHead
   let headDim := cols / cfg.nHead
-  -- Mirror Value.__truediv__: precompute `1/√d` then multiply per element.
   let invScale := 1.0 / Float.pow headDim.toFloat 0.5
   let (aws, outs) : Array (Array Float) × Array (Array Float) := Id.run do
     let mut aws : Array (Array Float) := #[]
@@ -259,7 +282,6 @@ def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let dWo := linearBwdW dout rows cols c.outFlat cols
   let headDim := cols / cfg.nHead
   let dOutHeads := splitHeadsFlat dMerged rows cols cfg.nHead
-  -- backward uses 1/√d as the scale factor folded into softmaxRowsBwd
   let invSqrt := 1.0 / Float.pow headDim.toFloat 0.5
   let (dqs, dks, dvs) : Array (Array Float) × Array (Array Float) × Array (Array Float) := Id.run do
     let mut dqs : Array (Array Float) := #[]
@@ -269,8 +291,6 @@ def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Arra
       let aw := c.attnW[h]!
       let q := c.q[h]!; let k := c.k[h]!; let v := c.v[h]!
       let dHead := dOutHeads[h]!
-      -- out = aw @ v ⇒ daw = dHead @ vᵀ ; dv = awᵀ @ dHead
-      -- linearBwdX(dout=dHead, n=rows, m=headDim, W=v, k=rows) gives dHead @ vᵀ with shape (rows × rows)
       let dawH := linearBwdX dHead rows headDim v rows
       let dvH := linearBwdW dHead rows headDim aw rows
       let dScaledH := softmaxRowsBwd aw dawH rows rows invSqrt
@@ -280,7 +300,6 @@ def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Arra
           for j in [0:rows] do
             if j > i then acc := acc.set! (i * rows + j) 0.0
         return acc
-      -- scores = q @ kᵀ ⇒ dq = dScaled @ k ; dk = dScaledᵀ @ q (both forward matmuls)
       let dqH := linearFwd dScaledMasked rows rows k headDim
       let dkH := linearFwd (transposeFlat dScaledMasked rows rows) rows rows q headDim
       dqs := dqs.push dqH
@@ -299,6 +318,12 @@ def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let dWv := linearBwdW dVflat rows cols c.xn cols
   let dxPre := maddFlat dout (rmsnormBwd dXn c.xPre c.rms rows cols)
   (dxPre, (dWq, dWk, dWv, dWo))
+
+/-!
+===--------------------------------------------------------------------------===
+MLP
+===--------------------------------------------------------------------------===
+-/
 
 def mlpFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) : Array Float × MlpCache :=
   let cols := cfg.nEmbed

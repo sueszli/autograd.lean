@@ -3,23 +3,24 @@ import Autograd.Ops
 namespace Autograd
 
 /-!
-Based on:
+===--------------------------------------------------------------------------===
+Types
 
-    typedef struct Tensor {
-        float32_t *data;   // flat contiguous array, row-major
-        uint64_t *shape;   // dimension sizes
-        uint64_t *strides; // (computed from shape; not stored here)
-        uint64_t ndim;     // == shape.size
-        uint64_t size;     // == ∏ shape
-        bool requires_grad;
-        struct Tensor *grad;
-        Function *grad_fn;
-        uint32_t ref_count;       // Lean GC handles this
-    } Tensor;
+Mirrors the C struct from `autograd.c`:
+https://github.com/sueszli/autograd.c
 
-Differences from the C version:
-- no `grad` field; `Tensor.backward` returns a `Nat → Array Float` map keyed by leaf `id`.
-- `grad_fn` is a closed `GradFn` enum, not a `Function*` callback; backward pattern-matches on it.
+  typedef struct Tensor {
+    float32_t *data;     // flat contiguous array, row-major
+    uint64_t *shape;     // dimension sizes
+    uint64_t *strides;   // computed from shape, not stored here
+    uint64_t ndim;       // == shape.size
+    uint64_t size;       // == product of shape
+    bool requires_grad;
+    struct Tensor *grad;
+    Function *grad_fn;
+    uint32_t ref_count;  // Lean GC handles this
+  } Tensor;
+===--------------------------------------------------------------------------===
 -/
 
 mutual
@@ -44,23 +45,24 @@ end
 instance : Inhabited GradFn := ⟨.leaf⟩
 instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
 
+/-!
+===--------------------------------------------------------------------------===
+Tensor methods
+===--------------------------------------------------------------------------===
+-/
+
 namespace Tensor
-def ndim (t : Tensor) : Nat := t.shape.size
-def size (t : Tensor) : Nat := t.shape.foldl (init := 1) (· * ·)
 def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]!
 def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
-def get (t : Tensor) (i j : Nat) : Float := t.data[i * t.cols + j]!
-
-def zeros (rows cols : Nat) : Tensor :=
-  { data := Array.replicate (rows * cols) 0.0, shape := #[rows, cols], id := 0, requiresGrad := false, gradFn := .leaf }
-
-def ofFn (rows cols : Nat) (f : Nat → Nat → Float) : Tensor :=
-  { data := (Array.range (rows * cols)).map fun k => f (k / cols) (k % cols), shape := #[rows, cols], id := 0, requiresGrad := false, gradFn := .leaf }
 
 def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor :=
   { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
 
-/-! ## Forward ops — each builds a Tensor and records the GradFn -/
+/-!
+===--------------------------------------------------------------------------===
+Forward ops
+===--------------------------------------------------------------------------===
+-/
 
 def gather (table : Tensor) (ids : Array Nat) : Tensor :=
   let cols := table.cols
@@ -76,7 +78,7 @@ def gather (table : Tensor) (ids : Array Nat) : Tensor :=
 def add (a b : Tensor) : Tensor :=
   { data := maddFlat a.data b.data, shape := a.shape, id := 0, requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }
 
--- x (n × k) @ w (k × m) → (n × m)
+-- `x (n × k) @ w (k × m) → (n × m)`
 def linear (x w : Tensor) : Tensor :=
   let n := x.rows; let k := x.cols; let m := w.cols
   { data := linearFwd x.data n k w.data m, shape := #[n, m], id := 0, requiresGrad := x.requiresGrad || w.requiresGrad, gradFn := .linearOp x w }
@@ -93,7 +95,7 @@ def mlp (cfg : Config) (xPre fc1 fc2 : Tensor) : Tensor :=
   let (out, cache) := mlpFwd cfg xPre.data xPre.rows fc1.data fc2.data
   { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache cfg }
 
--- scalar loss tensor; backward starts from a [1.0] buffer
+-- scalar loss tensor, `backward` starts from a `[1.0]` buffer
 def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=
   let probs := softmaxRows logits.data logits.rows logits.cols
   let sumMask := mask.foldl (init := 0.0) (· + ·)
@@ -102,7 +104,11 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
 
 end Tensor
 
-/-! ## Backward — walks the immutable graph, returns per-leaf accumulated grads -/
+/-!
+===--------------------------------------------------------------------------===
+Backward
+===--------------------------------------------------------------------------===
+-/
 
 private def gmAdd (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : Array (Nat × Array Float) :=
   match gm.findIdx? (fun (i, _) => i = id) with

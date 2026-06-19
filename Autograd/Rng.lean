@@ -1,4 +1,10 @@
-namespace MicroGPT
+namespace Autograd
+
+/-!
+===--------------------------------------------------------------------------===
+RNG
+===--------------------------------------------------------------------------===
+-/
 
 structure RngState where s : UInt64 deriving Inhabited
 
@@ -14,7 +20,7 @@ def rngGauss (mean stddev : Float) (st : RngState) : Float × RngState :=
   let z := Float.sqrt (-2.0 * Float.log u1') * Float.cos (2.0 * 3.141592653589793 * u2)
   (mean + stddev * z, st2)
 
--- fill flat (r × c) with N(0, σ²)
+-- fill flat `(r × c)` with `N(0, σ²)`
 def rngGaussFlat (r c : Nat) (σ : Float) (st : RngState) : Array Float × RngState := Id.run do
   let mut acc : Array Float := Array.mkEmpty (r * c)
   let mut s := st
@@ -23,4 +29,4 @@ def rngGaussFlat (r c : Nat) (σ : Float) (st : RngState) : Array Float × RngSt
     acc := acc.push x; s := s'
   return (acc, s)
 
-end MicroGPT
+end Autograd

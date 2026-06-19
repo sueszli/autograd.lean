@@ -4,6 +4,12 @@ import Autograd.Tensor
 namespace MicroGPT
 open Autograd
 
+/-!
+===--------------------------------------------------------------------------===
+Parameter structures
+===--------------------------------------------------------------------------===
+-/
+
 structure TransformerBlock where
   attnWq : Tensor
   attnWk : Tensor
@@ -20,6 +26,12 @@ structure Params where
   blocks : Array TransformerBlock
   deriving Inhabited
 
+/-!
+===--------------------------------------------------------------------------===
+Parameter ids
+===--------------------------------------------------------------------------===
+-/
+
 namespace ParamIds
 def wte : Nat := 0
 def wpe : Nat := 1
@@ -33,19 +45,18 @@ def mlpFc1 (h : Nat) : Nat := blockBase h + 4
 def mlpFc2 (h : Nat) : Nat := blockBase h + 5
 end ParamIds
 
--- mirrors original.py: rmsnorm-after-emb, per-layer (attn + residual) then (mlp + residual),
--- linear lm_head. Returns the pre-loss logits Tensor so parity-check can read it.
-def forwardLogits (p : Params) (cfg : Config) (input : Array Nat) : Tensor :=
-  let tokEmb := p.wte.gather input
-  let posEmb := p.wpe.gather (Array.range input.size)
-  let emb := tokEmb.add posEmb
-  let xInit := emb.rmsnorm cfg.epsilon
-  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b =>
-    let xa := Tensor.attn cfg acc b.attnWq b.attnWk b.attnWv b.attnWo
-    Tensor.mlp cfg xa b.mlpFc1 b.mlpFc2
-  x.linear p.lmHead
+/-!
+===--------------------------------------------------------------------------===
+Forward pass
+===--------------------------------------------------------------------------===
+-/
 
 def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array Float) : Tensor :=
-  (forwardLogits p cfg input).maskedCE target mask
+  let tokEmb := p.wte.gather input
+  let posEmb := p.wpe.gather (Array.range input.size)
+  let xInit := (tokEmb.add posEmb).rmsnorm cfg.epsilon
+  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b =>
+    Tensor.mlp cfg (Tensor.attn cfg acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
+  (x.linear p.lmHead).maskedCE target mask
 
 end MicroGPT
