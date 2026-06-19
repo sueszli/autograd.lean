@@ -158,8 +158,7 @@ def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Ar
 
 -- masked cross-entropy on already-softmaxed `probs` (rows × cols).
 -- Mirrors Python's `(1/n) * sum(losses)` order: reciprocal first, then multiply.
-def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat)
-    (mask : Array Float) (sumMask : Float) : Float :=
+def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat) (mask : Array Float) (sumMask : Float) : Float :=
   let total := (Array.range rows).foldl (init := 0.0) fun acc i =>
     let p := probs[i * cols + targetIds[i]!]!
     let pClamp := if p < 1e-30 then 1e-30 else p
@@ -167,8 +166,7 @@ def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Arra
   if sumMask == 0.0 then 0.0 else (1.0 / sumMask) * total
 
 -- fused softmax+CE backward: d_logits[i,c] = mask_i · (probs[i,c] − [c == t_i]) / sumMask
-def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat)
-    (mask : Array Float) (sumMask : Float) : Array Float :=
+def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat) (mask : Array Float) (sumMask : Float) : Array Float :=
   let inv := if sumMask == 0.0 then 0.0 else 1.0 / sumMask
   Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
@@ -219,8 +217,7 @@ def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Ar
         out := out.set! (i * cols + j) g
     return out
 
-def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float)
-    : Array Float × AttnCache :=
+def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
   let cols := cfg.nEmbed
   let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
   let qFlat := linearFwd xn rows cols wq cols
@@ -254,11 +251,9 @@ def attnFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let merged := mergeHeadsFlat outs rows cfg.nHead headDim
   let outFlat := linearFwd merged rows cols wo cols
   let outRes := maddFlat xPre outFlat
-  (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms,
-             q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
+  (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
 
-def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float)
-    (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
+def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
   let cols := cfg.nEmbed
   let dMerged := linearBwdX dout rows cols wo cols
   let dWo := linearBwdW dout rows cols c.outFlat cols
@@ -305,19 +300,16 @@ def attnBwd (cfg : Config) (dout : Array Float) (rows : Nat) (wq wk wv wo : Arra
   let dxPre := maddFlat dout (rmsnormBwd dXn c.xPre c.rms rows cols)
   (dxPre, (dWq, dWk, dWv, dWo))
 
-def mlpFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float)
-    : Array Float × MlpCache :=
+def mlpFwd (cfg : Config) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) : Array Float × MlpCache :=
   let cols := cfg.nEmbed
   let hidden := 4 * cols
   let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
   let hPre := linearFwd xn rows cols fc1 hidden
   let h := reluFlat hPre
   let y := linearFwd h rows hidden fc2 cols
-  (maddFlat xPre y, { xPre := xPre, xn := xn, rows := rows, cols := cols, rms := rms,
-                      hPre := hPre, h := h, hidden := hidden })
+  (maddFlat xPre y, { xPre := xPre, xn := xn, rows := rows, cols := cols, rms := rms, hPre := hPre, h := h, hidden := hidden })
 
-def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache)
-    : Array Float × (Array Float × Array Float) :=
+def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array Float × (Array Float × Array Float) :=
   let dh := linearBwdX dout c.rows c.cols fc2 c.hidden
   let dfc2 := linearBwdW dout c.rows c.cols c.h c.hidden
   let dhPre := reluBwdFlat dh c.hPre

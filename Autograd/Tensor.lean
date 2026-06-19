@@ -32,14 +32,13 @@ structure Tensor where
 
 inductive GradFn where
   | leaf
-  | gather   (table : Tensor) (ids : Array Nat)
-  | addOp    (a b : Tensor)
-  | linearOp (x w : Tensor)
+  | gather    (table : Tensor) (ids : Array Nat)
+  | addOp     (a b : Tensor)
+  | linearOp  (x w : Tensor)
   | rmsnormOp (a : Tensor) (rms : Array Float)
-  | attnOp   (xPre wq wk wv wo : Tensor) (cache : AttnCache) (cfg : Config)
-  | mlpOp    (xPre fc1 fc2 : Tensor) (cache : MlpCache) (cfg : Config)
-  | lossOp   (logits : Tensor) (probs : Array Float) (targets : Array Nat)
-             (mask : Array Float) (sumMask : Float)
+  | attnOp    (xPre wq wk wv wo : Tensor) (cache : AttnCache) (cfg : Config)
+  | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache) (cfg : Config)
+  | lossOp    (logits : Tensor) (probs : Array Float) (targets : Array Nat) (mask : Array Float) (sumMask : Float)
 end
 
 instance : Inhabited GradFn := ⟨.leaf⟩
@@ -53,16 +52,13 @@ def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
 def get (t : Tensor) (i j : Nat) : Float := t.data[i * t.cols + j]!
 
 def zeros (rows cols : Nat) : Tensor :=
-  { data := Array.replicate (rows * cols) 0.0, shape := #[rows, cols],
-    id := 0, requiresGrad := false, gradFn := .leaf }
+  { data := Array.replicate (rows * cols) 0.0, shape := #[rows, cols], id := 0, requiresGrad := false, gradFn := .leaf }
 
 def ofFn (rows cols : Nat) (f : Nat → Nat → Float) : Tensor :=
-  { data := (Array.range (rows * cols)).map fun k => f (k / cols) (k % cols),
-    shape := #[rows, cols], id := 0, requiresGrad := false, gradFn := .leaf }
+  { data := (Array.range (rows * cols)).map fun k => f (k / cols) (k % cols), shape := #[rows, cols], id := 0, requiresGrad := false, gradFn := .leaf }
 
 def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor :=
-  { data := data, shape := #[rows, cols], id := id,
-    requiresGrad := requiresGrad, gradFn := .leaf }
+  { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
 
 /-! ## Forward ops — each builds a Tensor and records the GradFn -/
 
@@ -75,58 +71,45 @@ def gather (table : Tensor) (ids : Array Nat) : Tensor :=
       for j in [0:cols] do
         acc := acc.set! (i * cols + j) table.data[id * cols + j]!
     return acc
-  { data := data, shape := #[ids.size, cols], id := 0,
-    requiresGrad := table.requiresGrad, gradFn := .gather table ids }
+  { data := data, shape := #[ids.size, cols], id := 0, requiresGrad := table.requiresGrad, gradFn := .gather table ids }
 
 def add (a b : Tensor) : Tensor :=
-  { data := maddFlat a.data b.data, shape := a.shape, id := 0,
-    requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }
+  { data := maddFlat a.data b.data, shape := a.shape, id := 0, requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }
 
 -- x (n × k) @ w (k × m) → (n × m)
 def linear (x w : Tensor) : Tensor :=
   let n := x.rows; let k := x.cols; let m := w.cols
-  { data := linearFwd x.data n k w.data m, shape := #[n, m], id := 0,
-    requiresGrad := x.requiresGrad || w.requiresGrad, gradFn := .linearOp x w }
+  { data := linearFwd x.data n k w.data m, shape := #[n, m], id := 0, requiresGrad := x.requiresGrad || w.requiresGrad, gradFn := .linearOp x w }
 
 def rmsnorm (a : Tensor) (eps : Float) : Tensor :=
   let (y, rms) := rmsnormFwd a.data a.rows a.cols eps
-  { data := y, shape := a.shape, id := 0,
-    requiresGrad := a.requiresGrad, gradFn := .rmsnormOp a rms }
+  { data := y, shape := a.shape, id := 0, requiresGrad := a.requiresGrad, gradFn := .rmsnormOp a rms }
 
 def attn (cfg : Config) (xPre wq wk wv wo : Tensor) : Tensor :=
   let (out, cache) := attnFwd cfg xPre.data xPre.rows wq.data wk.data wv.data wo.data
-  { data := out, shape := xPre.shape, id := 0,
-    requiresGrad := xPre.requiresGrad || wq.requiresGrad || wk.requiresGrad
-                    || wv.requiresGrad || wo.requiresGrad,
-    gradFn := .attnOp xPre wq wk wv wo cache cfg }
+  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || wq.requiresGrad || wk.requiresGrad || wv.requiresGrad || wo.requiresGrad, gradFn := .attnOp xPre wq wk wv wo cache cfg }
 
 def mlp (cfg : Config) (xPre fc1 fc2 : Tensor) : Tensor :=
   let (out, cache) := mlpFwd cfg xPre.data xPre.rows fc1.data fc2.data
-  { data := out, shape := xPre.shape, id := 0,
-    requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad,
-    gradFn := .mlpOp xPre fc1 fc2 cache cfg }
+  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache cfg }
 
 -- scalar loss tensor; backward starts from a [1.0] buffer
 def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=
   let probs := softmaxRows logits.data logits.rows logits.cols
   let sumMask := mask.foldl (init := 0.0) (· + ·)
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
-  { data := #[l], shape := #[1, 1], id := 0,
-    requiresGrad := logits.requiresGrad,
-    gradFn := .lossOp logits probs targets mask sumMask }
+  { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
 
 end Tensor
 
 /-! ## Backward — walks the immutable graph, returns per-leaf accumulated grads -/
 
-private def gmAdd (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float)
-    : Array (Nat × Array Float) :=
+private def gmAdd (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : Array (Nat × Array Float) :=
   match gm.findIdx? (fun (i, _) => i = id) with
   | some i => gm.set! i (id, maddFlat gm[i]!.2 g)
   | none => gm.push (id, g)
 
-partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float)
-    (gm : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
+partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gm : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
   match t.gradFn with
   | .leaf =>
     if t.requiresGrad then gmAdd gm t.id incoming else gm
