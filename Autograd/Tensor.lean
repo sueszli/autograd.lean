@@ -2,9 +2,8 @@ import Autograd.Ops
 
 namespace Autograd
 
-/-! ## Tensor + GradFn + autograd-aware forward + backward
-
-Mirrors autograd.c's `struct Tensor`:
+/-!
+Based on:
 
     typedef struct Tensor {
         float32_t *data;   // flat contiguous array, row-major
@@ -19,11 +18,8 @@ Mirrors autograd.c's `struct Tensor`:
     } Tensor;
 
 Differences from the C version:
-- `grad` isn't a mutating field; `Tensor.backward` returns a `Nat → Array Float`
-  map keyed by leaf `id`. This is the immutable analog of walking the graph and
-  writing into each input tensor's `grad` field.
-- `grad_fn` is a closed `GradFn` enum (not a `Function*` callback); backward
-  pattern-matches on it.
+- no `grad` field; `Tensor.backward` returns a `Nat → Array Float` map keyed by leaf `id`.
+- `grad_fn` is a closed `GradFn` enum, not a `Function*` callback; backward pattern-matches on it.
 -/
 
 mutual
@@ -47,8 +43,7 @@ inductive GradFn where
 end
 
 instance : Inhabited GradFn := ⟨.leaf⟩
-instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0,
-                                  requiresGrad := false, gradFn := .leaf }⟩
+instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
 
 namespace Tensor
 def ndim (t : Tensor) : Nat := t.shape.size
