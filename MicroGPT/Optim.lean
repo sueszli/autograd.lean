@@ -44,4 +44,17 @@ def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState) (gradientM
     return (acc, s')
   ({ wte := wte', wpe := wpe', lmHead := lm', blocks := blocks }, sFinal)
 
+private def testParams : Params :=
+  let mk := fun (rows : Nat) (cols : Nat) (id : Nat) => Tensor.leaf (Array.replicate (rows * cols) 0.0) rows cols id true
+  let blk : TransformerBlock := { attnWq := mk 2 2 (ParamIds.attnWq 0), attnWk := mk 2 2 (ParamIds.attnWk 0), attnWv := mk 2 2 (ParamIds.attnWv 0), attnWo := mk 2 2 (ParamIds.attnWo 0), mlpFc1 := mk 2 8 (ParamIds.mlpFc1 0), mlpFc2 := mk 8 2 (ParamIds.mlpFc2 0) }
+  { wte := mk 3 2 ParamIds.wte, wpe := mk 2 2 ParamIds.wpe, lmHead := mk 2 3 ParamIds.lmHead, blocks := #[blk] }
+
+-- `OptState.zeros` walks every leaf: `3 + nLayer·6 = 9` moment slots for a 1-layer model
+#guard (OptState.zeros testParams).m.size == 9 && (OptState.zeros testParams).v.size == 9
+-- an empty gradient map makes `adamWStep` a no-op across all params
+#guard
+  let cfg : Config := { nLayer := 1, nEmbed := 2, blockSize := 2, nHead := 1, vocabSize := 3, numSteps := 10 }
+  let (p', _) := adamWStep cfg 1 testParams (OptState.zeros testParams) #[]
+  arrApproxEq p'.wte.data testParams.wte.data && arrApproxEq p'.blocks[0]!.mlpFc2.data testParams.blocks[0]!.mlpFc2.data
+
 end MicroGPT

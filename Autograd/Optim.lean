@@ -26,6 +26,12 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   | some i => a.set! i (id, x)
   | none => a.push (id, x)
 
+#guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
+#guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
+#guard arrApproxEq (lookup #[(5, #[1, 2])] 9 #[0, 0]) #[0, 0]                  -- missing id returns the fallback
+#guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]  -- existing id overwritten in place
+#guard let a := upsert #[(5, #[1, 2])] 6 #[3, 3]; a.size == 2 && arrApproxEq (lookup a 6 #[]) #[3, 3]  -- new id appended
+
 /-!
 ===--------------------------------------------------------------------------===
 AdamW
@@ -48,12 +54,9 @@ def adamWBuf (cfg : AdamWConfig) (step : Nat) (lr : Float) (p g m v : Array Floa
   let oneMinusB2 := 1.0 - cfg.beta2
   let eps : Float := 1e-8
   let n := p.size
-  let nm : Array Float := (Array.range n).map fun i =>
-    cfg.beta1 * m[i]! + oneMinusB1 * g[i]!
-  let nv : Array Float := (Array.range n).map fun i =>
-    cfg.beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
-  let np : Array Float := (Array.range n).map fun i =>
-    p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
+  let nm : Array Float := (Array.range n).map fun i => cfg.beta1 * m[i]! + oneMinusB1 * g[i]!
+  let nv : Array Float := (Array.range n).map fun i => cfg.beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
+  let np : Array Float := (Array.range n).map fun i => p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
 def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
@@ -63,5 +66,13 @@ def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gradient
   let v := lookup s.v t.id z
   let (p', m', v') := adamWBuf cfg step lr t.data g m v
   ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
+
+-- first step from zero moments: `m = (1-β1)g`, `v = (1-β2)g²`, and bias correction makes the
+-- update size `lr·g/(|g|+ε) ≈ lr` for `g > 0`
+#guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
+-- a zero gradient is a no-op: params and both moments stay put
+#guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
+-- `stepOne` pulls the grad for `t.id` out of the map; an empty map means zero grad, so data is unchanged
+#guard let (t', _) := stepOne {} 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] (default : OptState); arrApproxEq t'.data #[5.0, -3.0]
 
 end Autograd

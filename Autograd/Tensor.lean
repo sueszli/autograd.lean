@@ -46,6 +46,9 @@ end
 instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
 instance : Inhabited GradFn := ⟨.leaf⟩
 
+#guard (default : Tensor).data.size == 0 && (default : Tensor).requiresGrad == false
+#guard match (default : GradFn) with | .leaf => true | _ => false
+
 /-!
 ===--------------------------------------------------------------------------===
 Tensor methods
@@ -59,6 +62,9 @@ def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
 def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor :=
   { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
 
+#guard let t := Tensor.leaf #[1, 2, 3, 4, 5, 6] 2 3 7 true; t.rows == 2 && t.cols == 3 && t.id == 7 && t.requiresGrad
+#guard ({ data := #[9], shape := #[3], id := 0, requiresGrad := false, gradFn := .leaf } : Tensor).cols == 1
+
 /-!
 ===--------------------------------------------------------------------------===
 Forward ops
@@ -66,15 +72,7 @@ Forward ops
 -/
 
 def gather (table : Tensor) (ids : Array Nat) : Tensor :=
-  let cols := table.cols
-  let data : Array Float := Id.run do
-    let mut acc : Array Float := Array.replicate (ids.size * cols) 0.0
-    for i in [0:ids.size] do
-      let id := ids[i]!
-      for j in [0:cols] do
-        acc := acc.set! (i * cols + j) table.data[id * cols + j]!
-    return acc
-  { data := data, shape := #[ids.size, cols], id := 0, requiresGrad := table.requiresGrad, gradFn := .gatherOp table ids }
+  { data := gatherFlat table.data table.cols ids, shape := #[ids.size, table.cols], id := 0, requiresGrad := table.requiresGrad, gradFn := .gatherOp table ids }
 
 def add (a b : Tensor) : Tensor :=
   { data := maddFlat a.data b.data, shape := a.shape, id := 0, requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }
@@ -105,6 +103,14 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
   let sumMask := mask.foldl (init := 0.0) (· + ·)
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
   { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
+
+-- `add` sums data and ORs `requiresGrad`
+#guard let c := Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 false; arrApproxEq c.data #[4, 6] && c.requiresGrad
+-- `gather` selects table rows by id, here rows 2 then 0
+#guard let t := (Tensor.leaf #[10, 11, 20, 21, 30, 31] 3 2 0 true).gather #[2, 0]; arrApproxEq t.data #[30, 31, 10, 11] && t.shape == #[2, 2]
+#guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]
+-- a uniform 2-logit prediction costs `-log 0.5` and the loss is a `[1,1]` scalar
+#guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]
 
 end Tensor
 
@@ -180,8 +186,7 @@ partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gradientMa
     let scaled := dLogits.map (scale * ·)
     logits.backwardAcc scaled gradientMap
   | .attnOp xPre wq wk wv wo cache cfg =>
-    let (dxPre, (dWq, dWk, dWv, dWo)) :=
-      attnBwd cfg incoming xPre.rows wq.data wk.data wv.data wo.data cache
+    let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd cfg incoming xPre.rows wq.data wk.data wv.data wo.data cache
     let gradientMap := xPre.backwardAcc dxPre gradientMap
     let gradientMap := wq.backwardAcc dWq gradientMap
     let gradientMap := wk.backwardAcc dWk gradientMap
@@ -195,5 +200,22 @@ partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gradientMa
 
 def Tensor.backward (loss : Tensor) : Array (Nat × Array Float) :=
   loss.backwardAcc #[1.0] #[]
+
+-- the shared-leaf example from the section doc: `a` (id 0) is reached twice in `a + b + a`,
+-- so its gradient accumulates to `[2,2]` while `b` (id 1) stays at `[1,1]`
+#guard
+  let gm := (Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 true + Tensor.leaf #[1, 2] 1 2 0 true).backwardAcc #[1, 1] #[]
+  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
+  arrApproxEq (get 0) #[2, 2] && arrApproxEq (get 1) #[1, 1]
+-- matmul backward: `dx = dout @ wᵀ`, `dw = xᵀ @ dout` (here `w = I` so `dx = dout`)
+#guard
+  let gm := ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 0, 0, 1] 2 2 1 true)).backwardAcc #[1, 1, 1, 1] #[]
+  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
+  arrApproxEq (get 0) #[1, 1, 1, 1] && arrApproxEq (get 1) #[4, 4, 6, 6]
+-- `backward` seeds `[1.0]`; cross-entropy gradient `probs - onehot` sums to zero across the row
+#guard
+  let gm := ((Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]).backward
+  let g := (gm.find? (fun p => p.1 == 0)).map (·.2) |>.getD #[]
+  approxEq (g[0]! + g[1]!) 0.0
 
 end Autograd

@@ -1,3 +1,5 @@
+import Autograd.Utils
+
 namespace Autograd
 
 /-!
@@ -15,8 +17,7 @@ def matmulFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array 
     let mut out : Array Float := Array.replicate (n * m) 0.0
     for i in [0:n] do
       for j in [0:m] do
-        let prods : Array Float := (Array.range k).map fun kk =>
-          x[i * k + kk]! * W[kk * m + j]!
+        let prods : Array Float := (Array.range k).map fun kk => x[i * k + kk]! * W[kk * m + j]!
         out := out.set! (i * m + j) (prods.foldl (init := 0.0) (· + ·))
     return out
 
@@ -40,6 +41,13 @@ def matmulBwdW (dout : Array Float) (n m : Nat) (x : Array Float) (k : Nat) : Ar
         out := out.set! (kk * m + j) s
     return out
 
+#guard arrApproxEq (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) #[1, 4, 2, 5, 3, 6]
+#guard arrApproxEq (transposeFlat (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) 3 2) #[1, 2, 3, 4, 5, 6]  -- transpose is its own inverse
+#guard arrApproxEq (matmulFwd #[1, 2, 3, 4] 2 2 #[1, 2, 3, 4] 2) #[7, 10, 15, 22]
+-- with an identity operand, `matmulBwdX`/`matmulBwdW` pass `dout` straight through
+#guard arrApproxEq (matmulBwdX #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
+#guard arrApproxEq (matmulBwdW #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
+
 /-!
 ===--------------------------------------------------------------------------===
 Element-wise
@@ -53,6 +61,10 @@ def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z
 
 def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
+
+#guard arrApproxEq (maddFlat #[1, 2, 3] #[3, 4, 5]) #[4, 6, 8]
+#guard arrApproxEq (reluFlat #[-1, 0, 2, -3]) #[0, 0, 2, 0]                  -- clamps negatives and exactly-zero
+#guard arrApproxEq (reluBwdFlat #[1, 1, 1, 1] #[-1, 0, 2, -3]) #[0, 0, 1, 0]  -- gradient gated by the pre-activation sign
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -89,6 +101,13 @@ def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Ar
         out := out.set! (i * cols + j) g
     return out
 
+#guard arrApproxEq (softmaxFlat #[0, 0, 0]) #[1.0 / 3, 1.0 / 3, 1.0 / 3]
+#guard approxEq ((softmaxFlat #[1, 2, 3]).foldl (· + ·) 0.0) 1.0                  -- normalized
+#guard arrApproxEq (softmaxFlat #[1, 2, 3]) (softmaxFlat #[-4, -3, -2])           -- shift-invariant (max-subtraction)
+#guard let sm := softmaxRows #[1, 2, 1, 0] 2 2; approxEq (sm[0]! + sm[1]!) 1.0 && approxEq (sm[2]! + sm[3]!) 1.0
+-- a row-constant upstream gradient maps to zero: the softmax Jacobian kills the common-mode component
+#guard arrApproxEq (softmaxRowsBwd (softmaxRows #[1, 2, 3, 4] 1 4) #[5, 5, 5, 5] 1 4 1.0) #[0, 0, 0, 0]
+
 /-!
 ===--------------------------------------------------------------------------===
 Multi-head
@@ -114,11 +133,21 @@ def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Fl
         out := out.set! (i * dModel + col) xs[h]![i * headDim + j]!
     return out
 
+-- one row of `d_model = 4` splits into 2 heads of width 2: first half, second half
+#guard let hs := splitHeadsFlat #[1, 2, 3, 4] 1 4 2; hs.size == 2 && arrApproxEq hs[0]! #[1, 2] && arrApproxEq hs[1]! #[3, 4]
+-- merge undoes split for a 2-row, 2-head buffer
+#guard arrApproxEq (mergeHeadsFlat (splitHeadsFlat #[1, 2, 3, 4, 5, 6, 7, 8] 2 4 2) 2 2 2) #[1, 2, 3, 4, 5, 6, 7, 8]
+
 /-!
 ===--------------------------------------------------------------------------===
 Embedding scatter
 ===--------------------------------------------------------------------------===
 -/
+
+-- data is flat row-major, so decode output index `k` to 2D via `/ cols` and `% cols`,
+-- then re-encode the source cell as `srcRow * cols + col`. duplicate ids are fine
+def gatherFlat (table : Array Float) (cols : Nat) (ids : Array Nat) : Array Float :=
+  (Array.range (ids.size * cols)).map fun k => table[ids[k / cols]! * cols + k % cols]!
 
 def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Array Float :=
   Id.run do
@@ -128,6 +157,11 @@ def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Ar
       for j in [0:cols] do
         out := out.set! (id * cols + j) (out[id * cols + j]! + grad[i * cols + j]!)
     return out
+
+-- ids [2, 0] select table rows 2 then 0
+#guard arrApproxEq (gatherFlat #[10, 11, 20, 21, 30, 31] 2 #[2, 0]) #[30, 31, 10, 11]
+-- ids [0, 0, 2] over 3 rows: row 0 accumulates both grads, row 1 stays zero, row 2 gets the third
+#guard arrApproxEq (scatterAddFlat 3 2 #[1, 1, 2, 2, 3, 3] #[0, 0, 2]) #[3, 3, 0, 0, 3, 3]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -154,6 +188,12 @@ def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : A
         let onehot : Float := if c = t then 1.0 else 0.0
         out := out.set! (i * cols + c) (m * (probs[i * cols + c]! - onehot) * inv)
     return out
+
+-- a 50/50 prediction on a 2-class target costs `-log 0.5`
+#guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[1] 1.0) (-Float.log 0.5)
+#guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[0] 0.0) 0.0          -- zero mask sum short-circuits to 0
+-- gradient is `probs - onehot` (scaled); it must sum to zero across the row
+#guard arrApproxEq (maskedCrossEntropyBwd #[0.5, 0.5] 1 2 #[0] #[1] 1.0) #[-0.5, 0.5]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -190,6 +230,12 @@ def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Ar
         let g := s * (dy[i * cols + j]! - x[i * cols + j]! * dot * s * s / dF)
         out := out.set! (i * cols + j) g
     return out
+
+-- with `eps = 0` the normalized row has unit mean-square, and the scale is `(ms)^(-1/2)`
+#guard let (y, _) := rmsnormFwd #[3, 4] 1 2 0.0; approxEq ((y[0]! * y[0]! + y[1]! * y[1]!) / 2.0) 1.0
+#guard let (_, s) := rmsnormFwd #[3, 4] 1 2 0.0; approxEq s[0]! (Float.pow 12.5 (-0.5))
+-- rmsnorm is scale-invariant, so the gradient along the input direction (`dy = x`, `eps = 0`) vanishes
+#guard let (_, rms) := rmsnormFwd #[3, 4] 1 2 0.0; arrApproxEq (rmsnormBwd #[3, 4] #[3, 4] rms 1 2) #[0, 0]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -295,6 +341,21 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
   let dxPre := maddFlat dout (rmsnormBwd dXn c.xPre c.rms rows cols)
   (dxPre, (dWq, dWk, dWv, dWo))
 
+-- zero `wo` zeroes the attention contribution, so the residual passes the input through unchanged
+#guard let cfg : AttnConfig := { nEmbed := 4, nHead := 2 }
+       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+       let z : Array Float := Array.replicate 16 0.0
+       let (out, _) := attnFwd cfg x 2 z z z z
+       arrApproxEq out x
+-- with zero weights the only surviving gradient path is the residual: `dxPre = dout`, weight grads are zero-sized-correct
+#guard let cfg : AttnConfig := { nEmbed := 4, nHead := 2 }
+       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+       let z : Array Float := Array.replicate 16 0.0
+       let dout : Array Float := #[1, 1, 1, 1, 1, 1, 1, 1]
+       let (_, c) := attnFwd cfg x 2 z z z z
+       let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd cfg dout 2 z z z z c
+       arrApproxEq dxPre dout && dWq.size == 16 && dWk.size == 16 && dWv.size == 16 && dWo.size == 16
+
 /-!
 ===--------------------------------------------------------------------------===
 MLP
@@ -333,5 +394,20 @@ def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array F
   let dxn := matmulBwdX dhPre c.rows c.hidden fc1 c.cols
   let dfc1 := matmulBwdW dhPre c.rows c.hidden c.xn c.cols
   (maddFlat dout (rmsnormBwd dxn c.xPre c.rms c.rows c.cols), (dfc1, dfc2))
+
+-- zero `fc2` zeroes the MLP branch, so the residual passes the input through unchanged
+#guard let cfg : MlpConfig := { nEmbed := 4 }
+       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+       let z : Array Float := Array.replicate 64 0.0
+       let (out, _) := mlpFwd cfg x 2 z z
+       arrApproxEq out x
+-- zero weights leave only the residual gradient path: `dxPre = dout`
+#guard let cfg : MlpConfig := { nEmbed := 4 }
+       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+       let z : Array Float := Array.replicate 64 0.0
+       let dout : Array Float := #[1, 1, 1, 1, 1, 1, 1, 1]
+       let (_, c) := mlpFwd cfg x 2 z z
+       let (dxPre, (df1, df2)) := mlpBwd dout z z c
+       arrApproxEq dxPre dout && df1.size == 64 && df2.size == 64
 
 end Autograd
