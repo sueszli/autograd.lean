@@ -82,6 +82,17 @@ def mlpFc1 (h : Nat) : Nat := blockBase h + 4
 def mlpFc2 (h : Nat) : Nat := blockBase h + 5
 end ParamIds
 
+-- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
+-- the layout guarantees it: the 3 globals occupy 0..2, then block `h` packs 6 strictly increasing
+-- ids starting at `3 + h*6`, and each block ends (`mlpFc2`) strictly below the next block's start.
+theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
+theorem block_ids_increasing (h : Nat) : ParamIds.attnWq h < ParamIds.attnWk h ∧ ParamIds.attnWk h < ParamIds.attnWv h ∧ ParamIds.attnWv h < ParamIds.attnWo h ∧ ParamIds.attnWo h < ParamIds.mlpFc1 h ∧ ParamIds.mlpFc1 h < ParamIds.mlpFc2 h := by
+  unfold ParamIds.attnWq ParamIds.attnWk ParamIds.attnWv ParamIds.attnWo ParamIds.mlpFc1 ParamIds.mlpFc2 ParamIds.blockBase; omega
+theorem blocks_disjoint (h : Nat) : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) := by
+  unfold ParamIds.mlpFc2 ParamIds.attnWq ParamIds.blockBase; omega
+theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by
+  unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
+
 #guard ParamIds.wte == 0 && ParamIds.wpe == 1 && ParamIds.lmHead == 2
 #guard ParamIds.attnWq 0 == 3 && ParamIds.mlpFc2 0 == 8                        -- block 0 occupies ids 3..8
 #guard ParamIds.blockBase 1 == 9 && ParamIds.attnWq 1 == 9                     -- block 1 starts right after, no overlap

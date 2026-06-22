@@ -25,6 +25,7 @@ def maxAbsDiff (a : Array Float) (b : Array Float) : Float :=
 #guard approxEq 1.0 (1.0 + 1e-12)
 #guard !approxEq 1.0 1.1
 #guard arrApproxEq #[1.0, 2.0, 3.0] #[1.0, 2.0, 3.0]
+#guard arrApproxEq #[] #[]                                -- empty arrays match (vacuous all over zero indices)
 #guard !arrApproxEq #[1.0, 2.0] #[1.0, 2.0, 3.0]          -- length mismatch fails
 #guard approxEq (maxAbsDiff #[1.0, 5.0] #[1.0, 2.0]) 3.0
 

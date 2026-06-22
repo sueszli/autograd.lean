@@ -26,6 +26,8 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   | some i => a.set! i (id, x)
   | none => a.push (id, x)
 
+theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by simp [zerosLike]
+
 #guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
 #guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
 #guard arrApproxEq (lookup #[(5, #[1, 2])] 9 #[0, 0]) #[0, 0]                  -- missing id returns the fallback
@@ -66,6 +68,11 @@ def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gradient
   let v := lookup s.v t.id z
   let (p', m', v') := adamWBuf cfg step lr t.data g m v
   ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
+
+-- all three outputs `(p', m', v')` match the param length, so the next step reads them back aligned
+theorem adamWBuf_param_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_m_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_v_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
 
 -- first step from zero moments: `m = (1-β1)g`, `v = (1-β2)g²`, and bias correction makes the
 -- update size `lr·g/(|g|+ε) ≈ lr` for `g > 0`

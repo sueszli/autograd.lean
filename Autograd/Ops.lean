@@ -4,6 +4,26 @@ namespace Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
+Size-invariant proof helpers
+
+`#guard` pins output sizes at fixed inputs. The `_size` theorems below prove them
+for every input: the invariant the flat-buffer `i * cols + j` indexing relies on.
+`foldl_size_pres`: a `List.foldl` whose step preserves `.size` preserves it overall.
+`replicate_loop2_size`: a double `Id.run` loop that only `setIfInBounds` into a
+`replicate` keeps that buffer's size.
+===--------------------------------------------------------------------------===
+-/
+
+theorem foldl_size_pres {α : Type} (l : List α) (init : Array Float) (f : Array Float → α → Array Float) (hf : ∀ b a, (f b a).size = b.size) : (l.foldl f init).size = init.size := by
+  induction l generalizing init with
+  | nil => rfl
+  | cons x xs ih => rw [List.foldl_cons, ih, hf]
+
+theorem replicate_loop2_size {α : Type} {β : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : Float) (g : Array Float → α → β → Nat) (h : Array Float → α → β → Float) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n :=
+  (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
+
+/-!
+===--------------------------------------------------------------------------===
 Matmul
 ===--------------------------------------------------------------------------===
 -/
@@ -41,9 +61,15 @@ def matmulBwdW (dout : Array Float) (n m : Nat) (x : Array Float) (k : Nat) : Ar
         out := out.set! (kk * m + j) s
     return out
 
+theorem transposeFlat_size (x : Array Float) (r : Nat) (c : Nat) : (transposeFlat x r c).size = c * r := by simp [transposeFlat]
+theorem matmulFwd_size (x : Array Float) (n : Nat) (k : Nat) (W : Array Float) (m : Nat) : (matmulFwd x n k W m).size = n * m := by simp [matmulFwd, Id.run]; exact replicate_loop2_size ..
+theorem matmulBwdX_size (dout : Array Float) (n : Nat) (m : Nat) (W : Array Float) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX, Id.run]; exact replicate_loop2_size ..
+theorem matmulBwdW_size (dout : Array Float) (n : Nat) (m : Nat) (x : Array Float) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW, Id.run]; exact replicate_loop2_size ..
+
 #guard arrApproxEq (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) #[1, 4, 2, 5, 3, 6]
 #guard arrApproxEq (transposeFlat (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) 3 2) #[1, 2, 3, 4, 5, 6]  -- transpose is its own inverse
 #guard arrApproxEq (matmulFwd #[1, 2, 3, 4] 2 2 #[1, 2, 3, 4] 2) #[7, 10, 15, 22]
+#guard arrApproxEq (matmulFwd #[1, 2, 3, 4, 5, 6] 2 3 #[1, 2, 3, 4, 5, 6] 2) #[22, 28, 49, 64]  -- rectangular `2×3 @ 3×2`, exercises `n ≠ m`
 -- with an identity operand, `matmulBwdX`/`matmulBwdW` pass `dout` straight through
 #guard arrApproxEq (matmulBwdX #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
 #guard arrApproxEq (matmulBwdW #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
@@ -61,6 +87,10 @@ def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z
 
 def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
+
+theorem maddFlat_size (a : Array Float) (b : Array Float) : (maddFlat a b).size = a.size := by simp [maddFlat]
+theorem reluFlat_size (x : Array Float) : (reluFlat x).size = x.size := by simp [reluFlat]
+theorem reluBwdFlat_size (dout : Array Float) (hPre : Array Float) : (reluBwdFlat dout hPre).size = dout.size := by simp [reluBwdFlat]
 
 #guard arrApproxEq (maddFlat #[1, 2, 3] #[3, 4, 5]) #[4, 6, 8]
 #guard arrApproxEq (reluFlat #[-1, 0, 2, -3]) #[0, 0, 2, 0]                  -- clamps negatives and exactly-zero
@@ -101,7 +131,12 @@ def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Ar
         out := out.set! (i * cols + j) g
     return out
 
+theorem softmaxFlat_size (v : Array Float) : (softmaxFlat v).size = v.size := by unfold softmaxFlat; split <;> simp
+theorem softmaxRows_size (x : Array Float) (rows : Nat) (cols : Nat) : (softmaxRows x rows cols).size = rows * cols := by simp [softmaxRows, Id.run]; exact replicate_loop2_size ..
+theorem softmaxRowsBwd_size (aw : Array Float) (daw : Array Float) (rows : Nat) (cols : Nat) (scale : Float) : (softmaxRowsBwd aw daw rows cols scale).size = rows * cols := by simp [softmaxRowsBwd, Id.run]; exact replicate_loop2_size ..
+
 #guard arrApproxEq (softmaxFlat #[0, 0, 0]) #[1.0 / 3, 1.0 / 3, 1.0 / 3]
+#guard (softmaxFlat #[]).size == 0                                                -- empty-input branch returns the input untouched
 #guard approxEq ((softmaxFlat #[1, 2, 3]).foldl (· + ·) 0.0) 1.0                  -- normalized
 #guard arrApproxEq (softmaxFlat #[1, 2, 3]) (softmaxFlat #[-4, -3, -2])           -- shift-invariant (max-subtraction)
 #guard let sm := softmaxRows #[1, 2, 1, 0] 2 2; approxEq (sm[0]! + sm[1]!) 1.0 && approxEq (sm[2]! + sm[3]!) 1.0
@@ -133,6 +168,9 @@ def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Fl
         out := out.set! (i * dModel + col) xs[h]![i * headDim + j]!
     return out
 
+theorem splitHeadsFlat_count (x : Array Float) (n : Nat) (dModel : Nat) (nHead : Nat) : (splitHeadsFlat x n dModel nHead).size = nHead := by simp [splitHeadsFlat]
+theorem mergeHeadsFlat_size (xs : Array (Array Float)) (n : Nat) (nHead : Nat) (headDim : Nat) : (mergeHeadsFlat xs n nHead headDim).size = n * (nHead * headDim) := by simp [mergeHeadsFlat, Id.run]; exact replicate_loop2_size ..
+
 -- one row of `d_model = 4` splits into 2 heads of width 2: first half, second half
 #guard let hs := splitHeadsFlat #[1, 2, 3, 4] 1 4 2; hs.size == 2 && arrApproxEq hs[0]! #[1, 2] && arrApproxEq hs[1]! #[3, 4]
 -- merge undoes split for a 2-row, 2-head buffer
@@ -157,6 +195,9 @@ def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Ar
       for j in [0:cols] do
         out := out.set! (id * cols + j) (out[id * cols + j]! + grad[i * cols + j]!)
     return out
+
+theorem gatherFlat_size (table : Array Float) (cols : Nat) (ids : Array Nat) : (gatherFlat table cols ids).size = ids.size * cols := by simp [gatherFlat]
+theorem scatterAddFlat_size (rows : Nat) (cols : Nat) (grad : Array Float) (ids : Array Nat) : (scatterAddFlat rows cols grad ids).size = rows * cols := by simp [scatterAddFlat, Id.run]; exact replicate_loop2_size ..
 
 -- ids [2, 0] select table rows 2 then 0
 #guard arrApproxEq (gatherFlat #[10, 11, 20, 21, 30, 31] 2 #[2, 0]) #[30, 31, 10, 11]
@@ -189,11 +230,15 @@ def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : A
         out := out.set! (i * cols + c) (m * (probs[i * cols + c]! - onehot) * inv)
     return out
 
+theorem maskedCrossEntropyBwd_size (probs : Array Float) (rows : Nat) (cols : Nat) (t : Array Nat) (mask : Array Float) (sumMask : Float) : (maskedCrossEntropyBwd probs rows cols t mask sumMask).size = rows * cols := by simp [maskedCrossEntropyBwd, Id.run]; exact replicate_loop2_size ..
+
 -- a 50/50 prediction on a 2-class target costs `-log 0.5`
 #guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[1] 1.0) (-Float.log 0.5)
 #guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[0] 0.0) 0.0          -- zero mask sum short-circuits to 0
+#guard approxEq (maskedCrossEntropy #[0.5, 0.5, 0.5, 0.5] 2 2 #[0, 1] #[1, 0] 1.0) (-Float.log 0.5)  -- per-token `mask=0` drops the second row from the sum
 -- gradient is `probs - onehot` (scaled); it must sum to zero across the row
 #guard arrApproxEq (maskedCrossEntropyBwd #[0.5, 0.5] 1 2 #[0] #[1] 1.0) #[-0.5, 0.5]
+#guard arrApproxEq (maskedCrossEntropyBwd #[0.5, 0.5, 0.5, 0.5] 2 2 #[0, 1] #[1, 0] 1.0) #[-0.5, 0.5, 0, 0]  -- masked row has zero gradient
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -230,6 +275,9 @@ def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Ar
         let g := s * (dy[i * cols + j]! - x[i * cols + j]! * dot * s * s / dF)
         out := out.set! (i * cols + j) g
     return out
+
+theorem rmsnormFwd_size (x : Array Float) (rows : Nat) (cols : Nat) (eps : Float) : (rmsnormFwd x rows cols eps).1.size = rows * cols := by simp [rmsnormFwd, Id.run]; exact replicate_loop2_size ..
+theorem rmsnormBwd_size (dy : Array Float) (x : Array Float) (scale : Array Float) (rows : Nat) (cols : Nat) : (rmsnormBwd dy x scale rows cols).size = rows * cols := by simp [rmsnormBwd, Id.run]; exact replicate_loop2_size ..
 
 -- with `eps = 0` the normalized row has unit mean-square, and the scale is `(ms)^(-1/2)`
 #guard let (y, _) := rmsnormFwd #[3, 4] 1 2 0.0; approxEq ((y[0]! * y[0]! + y[1]! * y[1]!) / 2.0) 1.0

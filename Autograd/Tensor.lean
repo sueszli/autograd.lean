@@ -62,6 +62,11 @@ def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
 def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor :=
   { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
 
+theorem leaf_rows (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).rows = r := rfl
+theorem leaf_cols (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).cols = c := rfl
+theorem leaf_data (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).data = data := rfl
+theorem leaf_id (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).id = id := rfl
+
 #guard let t := Tensor.leaf #[1, 2, 3, 4, 5, 6] 2 3 7 true; t.rows == 2 && t.cols == 3 && t.id == 7 && t.requiresGrad
 #guard ({ data := #[9], shape := #[3], id := 0, requiresGrad := false, gradFn := .leaf } : Tensor).cols == 1
 
@@ -105,7 +110,19 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
   { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
 
+-- `requiresGrad` propagation: an op tracks gradients iff any input does. shape propagation:
+-- `add`/`rmsnorm` keep the input shape, `matmul` produces `[rows × cols]`.
+theorem add_requiresGrad (a : Tensor) (b : Tensor) : (a + b).requiresGrad = (a.requiresGrad || b.requiresGrad) := rfl
+theorem add_shape (a : Tensor) (b : Tensor) : (a + b).shape = a.shape := rfl
+theorem matmul_requiresGrad (x : Tensor) (w : Tensor) : (x @ w).requiresGrad = (x.requiresGrad || w.requiresGrad) := rfl
+theorem matmul_shape (x : Tensor) (w : Tensor) : (x @ w).shape = #[x.rows, w.cols] := rfl
+theorem gather_requiresGrad (table : Tensor) (ids : Array Nat) : (table.gather ids).requiresGrad = table.requiresGrad := rfl
+theorem rmsnorm_shape (a : Tensor) (eps : Float) : (a.rmsnorm eps).shape = a.shape := rfl
+theorem maskedCE_requiresGrad (logits : Tensor) (targets : Array Nat) (mask : Array Float) : (logits.maskedCE targets mask).requiresGrad = logits.requiresGrad := rfl
+
 #guard let c := Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 false; arrApproxEq c.data #[4, 6] && c.requiresGrad  -- `add` sums, ORs `requiresGrad`
+#guard !(Tensor.leaf #[1, 2] 1 2 0 false + Tensor.leaf #[3, 4] 1 2 1 false).requiresGrad  -- no input tracks grad, neither does the sum
+#guard ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 false) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).requiresGrad  -- one tracked operand taints the matmul
 #guard let t := (Tensor.leaf #[10, 11, 20, 21, 30, 31] 3 2 0 true).gather #[2, 0]; arrApproxEq t.data #[30, 31, 10, 11] && t.shape == #[2, 2]  -- `gather` picks rows 2, 0
 #guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]  -- `@` matmul
 #guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]  -- uniform logits cost `-log 0.5`, `[1,1]` scalar
