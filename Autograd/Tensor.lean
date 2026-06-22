@@ -20,7 +20,6 @@ Mirrors the C struct from https://github.com/sueszli/autograd.c
     Function *grad_fn;   // function that created this tensor (NULL for leaves)
     uint32_t ref_count;  // reference count for memory management
   } Tensor;
-
 ===--------------------------------------------------------------------------===
 -/
 
