@@ -67,6 +67,8 @@ def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tenso
 /-!
 ===--------------------------------------------------------------------------===
 Forward ops
+
+Ops implementations live in a separate module.
 ===--------------------------------------------------------------------------===
 -/
 
