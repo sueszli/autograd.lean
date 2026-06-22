@@ -105,13 +105,10 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
   { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
 
--- `add` sums data and ORs `requiresGrad`
-#guard let c := Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 false; arrApproxEq c.data #[4, 6] && c.requiresGrad
--- `gather` selects table rows by id, here rows 2 then 0
-#guard let t := (Tensor.leaf #[10, 11, 20, 21, 30, 31] 3 2 0 true).gather #[2, 0]; arrApproxEq t.data #[30, 31, 10, 11] && t.shape == #[2, 2]
-#guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]
--- a uniform 2-logit prediction costs `-log 0.5` and the loss is a `[1,1]` scalar
-#guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]
+#guard let c := Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 false; arrApproxEq c.data #[4, 6] && c.requiresGrad  -- `add` sums, ORs `requiresGrad`
+#guard let t := (Tensor.leaf #[10, 11, 20, 21, 30, 31] 3 2 0 true).gather #[2, 0]; arrApproxEq t.data #[30, 31, 10, 11] && t.shape == #[2, 2]  -- `gather` picks rows 2, 0
+#guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]  -- `@` matmul
+#guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]  -- uniform logits cost `-log 0.5`, `[1,1]` scalar
 
 end Tensor
 
