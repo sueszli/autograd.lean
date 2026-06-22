@@ -1,0 +1,13 @@
+review Autograd
+    - Ops
+    - Optim
+    - Tensor
+    - Utils
+review MicroGPT
+    - Init
+    - Model
+    - Optim
+review Parity
+    - Main
+
+add theorems
