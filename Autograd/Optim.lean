@@ -34,6 +34,126 @@ theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by sim
 #guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]  -- existing id overwritten in place
 #guard let a := upsert #[(5, #[1, 2])] 6 #[3, 3]; a.size == 2 && arrApproxEq (lookup a 6 #[]) #[3, 3]  -- new id appended
 
+-- `find?` is blind to a localized edit at a slot the predicate already rejects: equal size, and at
+-- every index either the elements agree or both fail `p`. workhorse for the no-aliasing proof, where
+-- overwriting one parameter's slot leaves a foreign key's slot byte-identical.
+theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
+  cases hx : xs.find? p with
+  | none =>
+    rw [Array.find?_eq_none] at hx
+    symm
+    rw [Array.find?_eq_none]
+    intro y hy
+    rw [Array.mem_iff_getElem] at hy
+    obtain ⟨i, hi, rfl⟩ := hy
+    have hi' : i < xs.size := hsize ▸ hi
+    rcases h i hi' hi with he | ⟨_, hpy⟩
+    · rw [← he]; exact hx _ (Array.getElem_mem hi')
+    · simp [hpy]
+  | some b =>
+    rw [Array.find?_eq_some_iff_getElem] at hx
+    obtain ⟨hpb, i, hi, hib, hlt⟩ := hx
+    symm
+    rw [Array.find?_eq_some_iff_getElem]
+    have hi' : i < ys.size := hsize ▸ hi
+    refine ⟨hpb, i, hi', ?_, ?_⟩
+    · rcases h i hi hi' with he | ⟨hpxi, _⟩
+      · rw [← he, hib]
+      · rw [hib] at hpxi; rw [hpb] at hpxi; exact absurd hpxi (by simp)
+    · intro k hk
+      have hkx : k < xs.size := by omega
+      have hky : k < ys.size := by omega
+      have := hlt k hk
+      rcases h k hkx hky with he | ⟨_, hpyk⟩
+      · rw [← he]; exact this
+      · simp [hpyk]
+
+-- the optimizer reads back exactly the moment buffer it just wrote, for ANY prior state `a` (fresh
+-- key appended or existing key overwritten in place).
+theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (fallback : Array Float) : lookup (upsert a id x) id fallback = x := by
+  unfold lookup upsert
+  cases hf : a.findIdx? (fun (i, _) => i = id) with
+  | none =>
+    rw [Array.findIdx?_eq_none_iff] at hf
+    have : (a.push (id, x)).find? (fun (i, _) => i = id) = some (id, x) := by
+      rw [Array.find?_push]
+      have hnone : a.find? (fun (i, _) => i = id) = none := by
+        rw [Array.find?_eq_none]; intro y hy; simp; have := hf y hy; simpa using this
+      rw [hnone]; simp
+    rw [this]
+  | some i =>
+    rw [Array.findIdx?_eq_some_iff_findIdx_eq] at hf
+    obtain ⟨hilt, hfind⟩ := hf
+    rw [Array.findIdx_eq hilt] at hfind
+    obtain ⟨_, hearlier⟩ := hfind
+    have hset : (a.set! i (id, x)).find? (fun (i, _) => i = id) = some (id, x) := by
+      rw [Array.set!_eq_setIfInBounds]
+      rw [Array.find?_eq_some_iff_getElem]
+      have hisz : i < (a.setIfInBounds i (id, x)).size := by rw [Array.size_setIfInBounds]; exact hilt
+      refine ⟨by simp, i, hisz, ?_, ?_⟩
+      · rw [Array.getElem_setIfInBounds hilt]; simp
+      · intro j hj
+        have hjlt : j < a.size := by omega
+        rw [Array.getElem_setIfInBounds hjlt]
+        have hij : i ≠ j := by omega
+        simp only [hij, if_false]
+        have := hearlier j hj
+        simpa using this
+    rw [hset]
+
+-- updating one parameter's Adam state can NEVER corrupt or shadow another's: a lookup of a different
+-- key `j` returns exactly what it would before the `upsert`, for any prior state `a`.
+theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat) (x : Array Float) (fallback : Array Float) (hne : id ≠ j) : lookup (upsert a id x) j fallback = lookup a j fallback := by
+  unfold lookup
+  have key : (upsert a id x).find? (fun (i, _) => i = j) = a.find? (fun (i, _) => i = j) := by
+    unfold upsert
+    cases hf : a.findIdx? (fun (i, _) => i = id) with
+    | none =>
+      simp only []
+      rw [Array.find?_push]
+      have : (id = j) = False := by simp [hne]
+      simp [this]
+    | some i =>
+      simp only []
+      rw [Array.findIdx?_eq_some_iff_findIdx_eq] at hf
+      obtain ⟨hilt, hfind⟩ := hf
+      rw [Array.findIdx_eq hilt] at hfind
+      obtain ⟨hkey, _⟩ := hfind
+      simp only at hkey
+      rw [Array.set!_eq_setIfInBounds]
+      apply find?_congr_of_localized
+      · rw [Array.size_setIfInBounds]
+      · intro k hk hk'
+        rw [Array.size_setIfInBounds] at hk
+        rw [Array.getElem_setIfInBounds hk]
+        by_cases hik : i = k
+        · subst hik
+          right
+          refine ⟨?_, ?_⟩
+          · simp [hne]
+          · have : a[i].fst = id := by simpa using hkey
+            rw [this]; simp [hne]
+        · left; simp [hik]
+  rw [key]
+
+-- overwriting an existing key keeps the buffer count fixed, so the moment table cannot leak slots across steps.
+theorem upsert_size_existing (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hmem : (a.findIdx? (fun (i, _) => i = id)).isSome = true) : (upsert a id x).size = a.size := by
+  unfold upsert
+  cases hf : a.findIdx? (fun (i, _) => i = id) with
+  | none => rw [hf] at hmem; simp at hmem
+  | some i => simp only []; rw [Array.set!_eq_setIfInBounds, Array.size_setIfInBounds]
+
+-- a genuinely fresh key (no slot matches it) grows the buffer by exactly one.
+theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hfresh : ∀ (k : Nat) (hk : k < a.size), a[k].1 ≠ id) : (upsert a id x).size = a.size + 1 := by
+  unfold upsert
+  have hnone : a.findIdx? (fun (i, _) => i = id) = none := by
+    rw [Array.findIdx?_eq_none_iff]
+    intro y hy
+    rw [Array.mem_iff_getElem] at hy
+    obtain ⟨k, hk, rfl⟩ := hy
+    simp [hfresh k hk]
+  rw [hnone]; simp
+
 /-!
 ===--------------------------------------------------------------------------===
 AdamW

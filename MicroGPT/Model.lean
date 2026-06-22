@@ -99,6 +99,111 @@ theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by
 
 /-!
 ===--------------------------------------------------------------------------===
+Parameter id injectivity
+
+The guards above check a few ids; these prove the layout is collision-free for
+EVERY model size. `Slot` enumerates the parameter slots (3 globals plus 6 roles
+per block), `Slot.id` mirrors the `ParamIds` assignment, and the theorems show
+that map is injective and that `allIds` is exactly `List.range (3 + 6n)`: a
+gap-free bijection onto the gradient-buffer indices, so `backwardAcc` can never
+fold two distinct weights into one slot.
+===--------------------------------------------------------------------------===
+-/
+
+inductive Role where
+  | attnWq | attnWk | attnWv | attnWo | mlpFc1 | mlpFc2
+  deriving DecidableEq
+
+inductive Slot where
+  | wte
+  | wpe
+  | lmHead
+  | block (h : Nat) (r : Role)
+  deriving DecidableEq
+
+def Role.offset : Role → Nat
+  | .attnWq => 0
+  | .attnWk => 1
+  | .attnWv => 2
+  | .attnWo => 3
+  | .mlpFc1 => 4
+  | .mlpFc2 => 5
+
+-- mirrors the `ParamIds` layout: globals at `0..2`, role `r` of block `h` at `blockBase h + r.offset`.
+def Slot.id : Slot → Nat
+  | .wte => ParamIds.wte
+  | .wpe => ParamIds.wpe
+  | .lmHead => ParamIds.lmHead
+  | .block h r => ParamIds.blockBase h + r.offset
+
+theorem Role.offset_lt (r : Role) : r.offset < 6 := by
+  cases r <;> decide
+
+theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset) : r = r' := by
+  cases r <;> cases r' <;> simp_all [Role.offset]
+
+-- the slot-to-id map is globally injective over the whole parameter space (3 globals plus 6 roles in every block index), so `backwardAcc` can never fold two distinct weights into one gradient slot.
+theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id) : s = t := by
+  cases s <;> cases t <;>
+    simp_all [Slot.id, ParamIds.wte, ParamIds.wpe, ParamIds.lmHead, ParamIds.blockBase]
+  case wte.block hh r | wpe.block hh r | lmHead.block hh r =>
+    have := r.offset_lt; omega
+  case block.wpe hh r | block.lmHead hh r =>
+    have := r.offset_lt; omega
+  case block.block ha r hb r' =>
+    have h1 := r.offset_lt
+    have h2 := r'.offset_lt
+    refine ⟨by omega, ?_⟩
+    apply Role.offset_inj
+    omega
+
+-- strengthening: every in-bounds slot (`h < n`) lands inside the dense buffer range `[0, 3 + 6n)`; with `id_injective` this makes `Slot.id` a bijection onto the gradient-buffer indices.
+theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h < n) : s.id < 3 + 6 * n := by
+  cases s with
+  | wte => simp [Slot.id, ParamIds.wte]; omega
+  | wpe => simp [Slot.id, ParamIds.wpe]; omega
+  | lmHead => simp [Slot.id, ParamIds.lmHead]; omega
+  | block h r =>
+    have := hb h r rfl
+    have := r.offset_lt
+    simp only [Slot.id, ParamIds.blockBase]
+    omega
+
+def ParamIds.blockIds (h : Nat) : List Nat :=
+  [ParamIds.attnWq h, ParamIds.attnWk h, ParamIds.attnWv h, ParamIds.attnWo h, ParamIds.mlpFc1 h, ParamIds.mlpFc2 h]
+
+-- every parameter id of an `n`-layer model in assignment order: 3 globals, then 6 per block.
+def ParamIds.allIds : Nat → List Nat
+  | 0 => [ParamIds.wte, ParamIds.wpe, ParamIds.lmHead]
+  | n + 1 => ParamIds.allIds n ++ ParamIds.blockIds n
+
+theorem rangeAddSix (m : Nat) : List.range (m + 6) = List.range m ++ [m, m + 1, m + 2, m + 3, m + 4, m + 5] := by
+  rw [List.range_add]; rfl
+
+-- the ids assigned to an `n`-layer model (3 globals then 6 per block, in declared order) are exactly the contiguous `List.range (3 + 6n)`: gap-free, overlap-free, so a flat gradient buffer of length `3 + 6n` covers every parameter and nothing else.
+theorem ParamIds.allIds_eq_range (n : Nat) : ParamIds.allIds n = List.range (3 + 6 * n) := by
+  induction n with
+  | zero => rfl
+  | succ k ih =>
+    unfold ParamIds.allIds
+    rw [ih]
+    have e1 : 3 + 6 * (k + 1) = (3 + 6 * k) + 6 := by omega
+    rw [e1, rangeAddSix]
+    simp only [ParamIds.blockIds, ParamIds.attnWq, ParamIds.attnWk, ParamIds.attnWv, ParamIds.attnWo, ParamIds.mlpFc1, ParamIds.mlpFc2, ParamIds.blockBase]
+    have h0 : 3 + k * 6 + 0 = 3 + 6 * k := by omega
+    have h1 : 3 + k * 6 + 1 = 3 + 6 * k + 1 := by omega
+    have h2 : 3 + k * 6 + 2 = 3 + 6 * k + 2 := by omega
+    have h3 : 3 + k * 6 + 3 = 3 + 6 * k + 3 := by omega
+    have h4 : 3 + k * 6 + 4 = 3 + 6 * k + 4 := by omega
+    have h5 : 3 + k * 6 + 5 = 3 + 6 * k + 5 := by omega
+    rw [h0, h1, h2, h3, h4, h5]
+
+-- the literal id list the model iterates over has no duplicates for any layer count, ruling out silent gradient aliasing on the concrete list (not just the abstract slot type).
+theorem ParamIds.allIds_nodup (n : Nat) : (ParamIds.allIds n).Nodup := by
+  rw [ParamIds.allIds_eq_range]; exact List.nodup_range
+
+/-!
+===--------------------------------------------------------------------------===
 Forward pass
 ===--------------------------------------------------------------------------===
 -/

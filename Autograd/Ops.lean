@@ -66,6 +66,35 @@ theorem matmulFwd_size (x : Array Float) (n : Nat) (k : Nat) (W : Array Float) (
 theorem matmulBwdX_size (dout : Array Float) (n : Nat) (m : Nat) (W : Array Float) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX, Id.run]; exact replicate_loop2_size ..
 theorem matmulBwdW_size (dout : Array Float) (n : Nat) (m : Nat) (x : Array Float) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW, Id.run]; exact replicate_loop2_size ..
 
+-- reading index `k` of a `(Array.range n).map f` buffer is `f k` when `k` is in range. the `i * cols + j` flat indexing relies on this, and `x[...]!` hides it behind a `getD default`, so pin it once.
+theorem map_range_getElem! (f : Nat → Float) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by
+  rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
+
+-- defining property of transpose: output cell `(row j, col i)` holds input cell `(row i, col j)`. certifies the index permutation is exactly the matrix transpose, with no off-by-one in the `i * c + j` encode/decode.
+theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : Nat) (hi : i < r) (hj : j < c) : (transposeFlat x r c)[j * r + i]! = x[i * c + j]! := by
+  have hr : 0 < r := Nat.lt_of_le_of_lt (Nat.zero_le i) hi
+  have hbound : j * r + i < c * r := by
+    have h2 : j * r + r = (j + 1) * r := by rw [Nat.add_mul, Nat.one_mul]
+    have h3 : (j + 1) * r ≤ c * r := Nat.mul_le_mul_right r hj
+    omega
+  unfold transposeFlat
+  rw [map_range_getElem! _ _ _ hbound]
+  rw [show (j * r + i) % r = i by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hi], show (j * r + i) / r = j by rw [Nat.mul_comm j r, Nat.mul_add_div hr, Nat.div_eq_of_lt hi, Nat.add_zero]]
+
+-- transpose is its own inverse for any input of the matching shape (back-transpose uses swapped dims `c r`). certifies the rearrangement is a true permutation: no cell dropped or duplicated, for every `r`, `c`, and buffer.
+theorem transposeFlat_involution (x : Array Float) (r : Nat) (c : Nat) (h : x.size = r * c) : transposeFlat (transposeFlat x r c) c r = x := by
+  apply Array.ext
+  · simp [transposeFlat, h]
+  · intro k hk1 hk2
+    have hkrc : k < r * c := by simpa [transposeFlat] using hk1
+    have hc : 0 < c := by rcases Nat.eq_zero_or_pos c with rfl | hc; simp at hkrc; exact hc
+    have hkc : k % c < c := Nat.mod_lt _ hc
+    have hkdc : k / c < r := by apply Nat.div_lt_of_lt_mul; rwa [Nat.mul_comm] at hkrc
+    rw [← getElem!_pos _ k hk1, ← getElem!_pos x k hk2]
+    rw [show k = (k / c) * c + (k % c) by rw [Nat.mul_comm (k / c) c, Nat.div_add_mod]]
+    rw [transposeFlat_get _ c r (k % c) (k / c) hkc hkdc]
+    rw [transposeFlat_get x r c (k / c) (k % c) hkdc hkc]
+
 #guard arrApproxEq (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) #[1, 4, 2, 5, 3, 6]
 #guard arrApproxEq (transposeFlat (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) 3 2) #[1, 2, 3, 4, 5, 6]  -- transpose is its own inverse
 #guard arrApproxEq (matmulFwd #[1, 2, 3, 4] 2 2 #[1, 2, 3, 4] 2) #[7, 10, 15, 22]
@@ -198,6 +227,34 @@ def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Ar
 
 theorem gatherFlat_size (table : Array Float) (cols : Nat) (ids : Array Nat) : (gatherFlat table cols ids).size = ids.size * cols := by simp [gatherFlat]
 theorem scatterAddFlat_size (rows : Nat) (cols : Nat) (grad : Array Float) (ids : Array Nat) : (scatterAddFlat rows cols grad ids).size = rows * cols := by simp [scatterAddFlat, Id.run]; exact replicate_loop2_size ..
+
+-- reading index `i` of `Array.range n` is `i` when in range. `gatherFlat` decodes ids through `ids[...]!`, so this lets the identity-lookup proof escape `getD default`.
+theorem nat_range_getElem! (n : Nat) (i : Nat) (hi : i < n) : (Array.range n)[i]! = i := by
+  rw [getElem!_pos _ i (by simp [hi]), Array.getElem_range]
+
+-- general gather characterization: output cell `(row, col)` reads source cell `(ids[row], col)`. certifies the `/ cols` and `% cols` decode plus the `ids[row] * cols + col` re-encode for every id array and shape, not only identity ids.
+theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row : Nat) (col : Nat) (hrow : row < ids.size) (hcol : col < cols) : (gatherFlat table cols ids)[row * cols + col]! = table[ids[row]! * cols + col]! := by
+  have hbound : row * cols + col < ids.size * cols := by
+    have h2 : row * cols + cols = (row + 1) * cols := by rw [Nat.add_mul, Nat.one_mul]
+    have h3 : (row + 1) * cols ≤ ids.size * cols := Nat.mul_le_mul_right cols hrow
+    omega
+  unfold gatherFlat
+  rw [map_range_getElem! _ _ _ hbound]
+  rw [show (row * cols + col) % cols = col by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hcol], show (row * cols + col) / cols = row by rw [Nat.mul_comm row cols, Nat.mul_add_div (Nat.lt_of_le_of_lt (Nat.zero_le col) hcol), Nat.div_eq_of_lt hcol, Nat.add_zero]]
+
+-- gathering rows `[0, 1, ..., rows-1]` reproduces the table byte-for-byte for every shape. corollary of `gatherFlat_get` at identity ids: the decode `(k/cols, k%cols)` round-trips to `k` exactly.
+theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h : table.size = rows * cols) : gatherFlat table cols (Array.range rows) = table := by
+  apply Array.ext
+  · simp [gatherFlat, h]
+  · intro k hk1 hk2
+    have hkrc : k < rows * cols := by simpa [gatherFlat] using hk1
+    have hc : 0 < cols := by rcases Nat.eq_zero_or_pos cols with rfl | hc; simp at hkrc; exact hc
+    have hkdc : k / cols < rows := by apply Nat.div_lt_of_lt_mul; rwa [Nat.mul_comm] at hkrc
+    have hkc : k % cols < cols := Nat.mod_lt _ hc
+    rw [← getElem!_pos _ k hk1, ← getElem!_pos table k hk2]
+    rw [show k = (k / cols) * cols + (k % cols) by rw [Nat.mul_comm (k / cols) cols, Nat.div_add_mod]]
+    rw [gatherFlat_get table cols (Array.range rows) (k / cols) (k % cols) (by rw [Array.size_range]; exact hkdc) hkc]
+    rw [nat_range_getElem! _ _ hkdc]
 
 -- ids [2, 0] select table rows 2 then 0
 #guard arrApproxEq (gatherFlat #[10, 11, 20, 21, 30, 31] 2 #[2, 0]) #[30, 31, 10, 11]

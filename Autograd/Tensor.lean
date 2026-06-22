@@ -232,4 +232,77 @@ def Tensor.backward (loss : Tensor) : Array (Nat × Array Float) :=
   let g := (gm.find? (fun p => p.1 == 0)).map (·.2) |>.getD #[]
   approxEq (g[0]! + g[1]!) 0.0
 
+/-!
+===--------------------------------------------------------------------------===
+Gradient-map accumulation invariants
+
+`gradientMapAdd` is the merge step every `backwardAcc` branch routes through.
+These prove it accumulates correctly for shared leaves and never clobbers or
+invents ids: the id set after an add is exactly the old set plus `{id}`.
+===--------------------------------------------------------------------------===
+-/
+
+-- append base case: an unseen `id` becomes a new trailing entry holding `g` verbatim.
+theorem gradientMapAdd_fresh (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (h : gm.findIdx? (fun (i, _) => i = id) = none) : gradientMapAdd gm id g = gm.push (id, g) := by
+  unfold gradientMapAdd; rw [h]
+
+-- shared-leaf accumulation: two adds for the same `id` collapse to ONE entry whose value is `maddFlat g g'`, the defining property of reverse-mode autograd.
+theorem gradientMapAdd_shared (id : Nat) (g : Array Float) (g' : Array Float) : gradientMapAdd (gradientMapAdd #[] id g) id g' = #[(id, maddFlat g g')] := by
+  have h0 : gradientMapAdd #[] id g = #[(id, g)] := by unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
+  rw [h0]; unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
+
+-- retrievability: after recording `id`, an entry for it always exists, so the optimizer's lookup can never miss it. covers both `set!` and `push` branches.
+theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : ∃ p ∈ (gradientMapAdd gm id g), p.1 = id := by
+  unfold gradientMapAdd
+  split
+  case h_1 i h =>
+    have hi : i < gm.size := (Array.findIdx?_eq_some_iff_getElem.mp h).1
+    refine ⟨(id, maddFlat gm[i]!.2 g), ?_, rfl⟩
+    rw [Array.set!_eq_setIfInBounds]
+    exact Array.mem_setIfInBounds hi
+  case h_2 h => exact ⟨(id, g), by simp, rfl⟩
+
+-- no-clobber: adding one leaf's gradient never drops any other leaf already in the map, so after a full backward pass every parameter that got a gradient still has it.
+theorem gradientMapAdd_pres_ids (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ gm, p.1 = j) : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j := by
+  obtain ⟨p, hp, hpj⟩ := hj
+  rw [Array.mem_iff_getElem] at hp
+  obtain ⟨k, hk, hkp⟩ := hp
+  unfold gradientMapAdd
+  split
+  case h_2 h => exact ⟨p, Array.mem_push.mpr (Or.inl (Array.mem_iff_getElem.mpr ⟨k, hk, hkp⟩)), hpj⟩
+  case h_1 i h =>
+    have hi : i < gm.size := (Array.findIdx?_eq_some_iff_getElem.mp h).1
+    rw [Array.set!_eq_setIfInBounds]
+    by_cases hik : i = k
+    · have hmatch : gm[i].1 = id := by simpa using (Array.findIdx?_eq_some_iff_getElem.mp h).2.1
+      refine ⟨(id, maddFlat gm[i]!.2 g), Array.mem_setIfInBounds hi, ?_⟩
+      subst hik
+      rw [hkp] at hmatch
+      rw [← hmatch]; exact hpj
+    · have hsize : k < (gm.setIfInBounds i (id, maddFlat gm[i]!.2 g)).size := by rw [Array.size_setIfInBounds]; exact hk
+      refine ⟨p, Array.mem_iff_getElem.mpr ⟨k, hsize, ?_⟩, hpj⟩
+      rw [Array.getElem_setIfInBounds_ne hk hik, hkp]
+
+-- converse of `pres_ids`: every id present after an add was either `id` or already there, so accumulation invents no spurious ids. with `mem` + `pres_ids` this pins the id-set to exactly `old ∪ {id}`.
+theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j) : j = id ∨ ∃ p ∈ gm, p.1 = j := by
+  obtain ⟨p, hp, hpj⟩ := hj
+  unfold gradientMapAdd at hp
+  split at hp
+  case h_2 h =>
+    rcases Array.mem_push.mp hp with hmem | heq
+    · exact Or.inr ⟨p, hmem, hpj⟩
+    · left; rw [← hpj, heq]
+  case h_1 i h =>
+    have hi : i < gm.size := (Array.findIdx?_eq_some_iff_getElem.mp h).1
+    rw [Array.set!_eq_setIfInBounds] at hp
+    rw [Array.mem_iff_getElem] at hp
+    obtain ⟨k, hk, hkp⟩ := hp
+    rw [Array.size_setIfInBounds] at hk
+    by_cases hik : i = k
+    · subst hik
+      rw [Array.getElem_setIfInBounds_self] at hkp
+      left; rw [← hpj, ← hkp]
+    · rw [Array.getElem_setIfInBounds_ne hk hik] at hkp
+      exact Or.inr ⟨p, Array.mem_iff_getElem.mpr ⟨k, hk, hkp⟩, hpj⟩
+
 end Autograd
