@@ -146,9 +146,11 @@ def main : IO Unit := do
     let mx := maxDiff a b
     if mx > atol then failures := failures.push (label, mx)
   let totalMs := (← IO.monoMsNow) - startMs
+  let ms := totalMs % 1000
+  let msStr := if ms < 10 then s!"00{ms}" else if ms < 100 then s!"0{ms}" else s!"{ms}"
   if failures.isEmpty then
     IO.println s!"passed parity check (atol={atolStr})"
-    IO.println s!"total time: {totalMs / 1000}s"
+    IO.println s!"total time: {totalMs / 1000}.{msStr}s"
   else
     for (label, mx) in failures do
       IO.eprintln s!"  {label}: max |Δ| = {mx}"

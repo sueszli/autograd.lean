@@ -118,14 +118,25 @@ where each entry is `(t.id, gradient of t.data)`.
 
   let a := Tensor.leaf #[1,2] .. (id := 0)   -- a.data = [1,2]
   let b := Tensor.leaf #[3,4] .. (id := 1)   -- b.data = [3,4]
-  let c := a + b                             -- c.data = [4,6], c.gradFn = .addOp a b
+  let c := a + b + a                         -- a is used twice
+
+forward builds this graph (each node links back to its inputs via `gradFn`):
+
+        c                  backprop starts here with seed #[1,1]
+       / \                 each `+` copies its gradient to both inputs unchanged,
+    (a+b) a                so the gradient flows down to the leaves
+     / \
+    a   b                  `a` is a shared leaf: reached via the left subtree
+                           AND the right branch, so its two gradients sum
+
   c.backwardAcc #[1,1] #[]
   --            ^^^^^^      gradient to start from, all 1s because backprop begins at c
   --                   ^^^  empty map to fill
 
   #[]                                        -- map starts empty
-  #[(0, #[1,1])]                             -- reached leaf a (id 0): stored its gradient
-  #[(0, #[1,1]), (1, #[1,1])]                -- reached leaf b (id 1): stored its gradient (final result)
+  #[(0, #[1,1])]                             -- reached a (id 0): not present yet, append
+  #[(0, #[1,1]), (1, #[1,1])]                -- reached b (id 1): not present yet, append
+  #[(0, #[2,2]), (1, #[1,1])]                -- reached a again (id 0): already present, so sum -> [2,2]
 
 Each `#[1,1]` is the gradient of that tensor's `.data` (same length).
 `gradientMapAdd` sums into an entry if its `id` is already present, else appends.
