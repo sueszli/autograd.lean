@@ -10,15 +10,17 @@ Mirrors the C struct from https://github.com/sueszli/autograd.c
 
   typedef struct Tensor {
     float32_t *data;     // flat contiguous array, row-major
-    uint64_t *shape;     // dimension sizes
-    uint64_t *strides;   // computed from shape, not stored here
-    uint64_t ndim;       // == shape.size
-    uint64_t size;       // == product of shape
-    bool requires_grad;
-    struct Tensor *grad;
-    Function *grad_fn;
-    uint32_t ref_count;  // Lean GC handles this
+    uint64_t *shape;     // array of dimension sizes
+    uint64_t *strides;   // array of elements to skip to get to next element in each dimension
+    uint64_t ndim;       // rank (ie. 1 for vector, 2 for matrix, etc.)
+    uint64_t size;       // total number of elements
+
+    bool requires_grad;  // whether to track operations for autograd
+    struct Tensor *grad; // accumulated gradient (del loss / del tensor) during backprop
+    Function *grad_fn;   // function that created this tensor (NULL for leaves)
+    uint32_t ref_count;  // reference count for memory management
   } Tensor;
+
 ===--------------------------------------------------------------------------===
 -/
 
@@ -32,13 +34,13 @@ structure Tensor where
 
 inductive GradFn where
   | leaf
-  | gather    (table : Tensor) (ids : Array Nat)
   | addOp     (a b : Tensor)
-  | linearOp  (x w : Tensor)
+  | matmulOp  (x w : Tensor)
+  | gatherOp  (table : Tensor) (ids : Array Nat)
   | rmsnormOp (a : Tensor) (rms : Array Float)
+  | lossOp    (logits : Tensor) (probs : Array Float) (targets : Array Nat) (mask : Array Float) (sumMask : Float)
   | attnOp    (xPre wq wk wv wo : Tensor) (cache : AttnCache) (cfg : AttnConfig)
   | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache) (cfg : MlpConfig)
-  | lossOp    (logits : Tensor) (probs : Array Float) (targets : Array Nat) (mask : Array Float) (sumMask : Float)
 end
 
 instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
@@ -72,15 +74,18 @@ def gather (table : Tensor) (ids : Array Nat) : Tensor :=
       for j in [0:cols] do
         acc := acc.set! (i * cols + j) table.data[id * cols + j]!
     return acc
-  { data := data, shape := #[ids.size, cols], id := 0, requiresGrad := table.requiresGrad, gradFn := .gather table ids }
+  { data := data, shape := #[ids.size, cols], id := 0, requiresGrad := table.requiresGrad, gradFn := .gatherOp table ids }
 
 def add (a b : Tensor) : Tensor :=
   { data := maddFlat a.data b.data, shape := a.shape, id := 0, requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }
 
--- `x (n × k) @ w (k × m) → (n × m)`
-def linear (x w : Tensor) : Tensor :=
+instance : Add Tensor := ⟨Tensor.add⟩
+
+def matmul (x w : Tensor) : Tensor :=
   let n := x.rows; let k := x.cols; let m := w.cols
-  { data := linearFwd x.data n k w.data m, shape := #[n, m], id := 0, requiresGrad := x.requiresGrad || w.requiresGrad, gradFn := .linearOp x w }
+  { data := matmulFwd x.data n k w.data m, shape := #[n, m], id := 0, requiresGrad := x.requiresGrad || w.requiresGrad, gradFn := .matmulOp x w }
+
+infixl:70 " @ " => Tensor.matmul
 
 def rmsnorm (a : Tensor) (eps : Float) : Tensor :=
   let (y, rms) := rmsnormFwd a.data a.rows a.cols eps
@@ -106,50 +111,70 @@ end Tensor
 /-!
 ===--------------------------------------------------------------------------===
 Backward
+
+Immutable tensors have no `.grad` field.
+`backwardAcc` returns a `gradientMap` of type `Array (Nat × Array Float)`
+where each entry is `(t.id, gradient of t.data)`.
+
+  let a := Tensor.leaf #[1,2] .. (id := 0)   -- a.data = [1,2]
+  let b := Tensor.leaf #[3,4] .. (id := 1)   -- b.data = [3,4]
+  let c := a + b                             -- c.data = [4,6], c.gradFn = .addOp a b
+  c.backwardAcc #[1,1] #[]
+  --            ^^^^^^      gradient to start from, all 1s because backprop begins at c
+  --                   ^^^  empty map to fill
+
+  #[]                                        -- map starts empty
+  #[(0, #[1,1])]                             -- reached leaf a (id 0): stored its gradient
+  #[(0, #[1,1]), (1, #[1,1])]                -- reached leaf b (id 1): stored its gradient (final result)
+
+Each `#[1,1]` is the gradient of that tensor's `.data` (same length).
+`gradientMapAdd` sums into an entry if its `id` is already present, else appends.
+The optimizer pulls a weight's gradient by its `id`.
 ===--------------------------------------------------------------------------===
 -/
 
-private def gmAdd (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : Array (Nat × Array Float) :=
-  match gm.findIdx? (fun (i, _) => i = id) with
-  | some i => gm.set! i (id, maddFlat gm[i]!.2 g)
-  | none => gm.push (id, g)
+private def gradientMapAdd (gradientMap : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : Array (Nat × Array Float) :=
+  match gradientMap.findIdx? (fun (i, _) => i = id) with
+  | some i => gradientMap.set! i (id, maddFlat gradientMap[i]!.2 g)
+  | none => gradientMap.push (id, g)
 
-partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gm : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
+partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
   match t.gradFn with
   | .leaf =>
-    if t.requiresGrad then gmAdd gm t.id incoming else gm
+    if t.requiresGrad then gradientMapAdd gradientMap t.id incoming else gradientMap
+  -- feed each call's returned map into the next. `add` splits its gradient unchanged to both inputs.
   | .addOp a b =>
-    let gm := a.backwardAcc incoming gm
-    b.backwardAcc incoming gm
-  | .linearOp x w =>
+    let gradientMap := a.backwardAcc incoming gradientMap
+    b.backwardAcc incoming gradientMap
+  | .matmulOp x w =>
     let n := x.rows; let k := x.cols; let m := w.cols
-    let dx := linearBwdX incoming n m w.data k
-    let dw := linearBwdW incoming n m x.data k
-    let gm := x.backwardAcc dx gm
-    w.backwardAcc dw gm
-  | .rmsnormOp a rms =>
-    a.backwardAcc (rmsnormBwd incoming a.data rms a.rows a.cols) gm
-  | .gather table ids =>
+    let dx := matmulBwdX incoming n m w.data k
+    let dw := matmulBwdW incoming n m x.data k
+    let gradientMap := x.backwardAcc dx gradientMap
+    w.backwardAcc dw gradientMap
+  | .gatherOp table ids =>
     let dTable := scatterAddFlat table.rows table.cols incoming ids
-    table.backwardAcc dTable gm
-  | .attnOp xPre wq wk wv wo cache cfg =>
-    let (dxPre, (dWq, dWk, dWv, dWo)) :=
-      attnBwd cfg incoming xPre.rows wq.data wk.data wv.data wo.data cache
-    let gm := xPre.backwardAcc dxPre gm
-    let gm := wq.backwardAcc dWq gm
-    let gm := wk.backwardAcc dWk gm
-    let gm := wv.backwardAcc dWv gm
-    wo.backwardAcc dWo gm
-  | .mlpOp xPre fc1 fc2 cache _ =>
-    let (dxPre, (df1, df2)) := mlpBwd incoming fc1.data fc2.data cache
-    let gm := xPre.backwardAcc dxPre gm
-    let gm := fc1.backwardAcc df1 gm
-    fc2.backwardAcc df2 gm
+    table.backwardAcc dTable gradientMap
+  | .rmsnormOp a rms =>
+    a.backwardAcc (rmsnormBwd incoming a.data rms a.rows a.cols) gradientMap
   | .lossOp logits probs targets mask sumMask =>
     let scale := if incoming.size > 0 then incoming[0]! else 1.0
     let dLogits := maskedCrossEntropyBwd probs logits.rows logits.cols targets mask sumMask
     let scaled := dLogits.map (scale * ·)
-    logits.backwardAcc scaled gm
+    logits.backwardAcc scaled gradientMap
+  | .attnOp xPre wq wk wv wo cache cfg =>
+    let (dxPre, (dWq, dWk, dWv, dWo)) :=
+      attnBwd cfg incoming xPre.rows wq.data wk.data wv.data wo.data cache
+    let gradientMap := xPre.backwardAcc dxPre gradientMap
+    let gradientMap := wq.backwardAcc dWq gradientMap
+    let gradientMap := wk.backwardAcc dWk gradientMap
+    let gradientMap := wv.backwardAcc dWv gradientMap
+    wo.backwardAcc dWo gradientMap
+  | .mlpOp xPre fc1 fc2 cache _ =>
+    let (dxPre, (df1, df2)) := mlpBwd incoming fc1.data fc2.data cache
+    let gradientMap := xPre.backwardAcc dxPre gradientMap
+    let gradientMap := fc1.backwardAcc df1 gradientMap
+    fc2.backwardAcc df2 gradientMap
 
 def Tensor.backward (loss : Tensor) : Array (Nat × Array Float) :=
   loss.backwardAcc #[1.0] #[]

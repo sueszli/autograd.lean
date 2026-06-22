@@ -86,9 +86,9 @@ def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array
   let mlpCfg := cfg.toMlpConfig
   let tokEmb := p.wte.gather input
   let posEmb := p.wpe.gather (Array.range input.size)
-  let xInit := (tokEmb.add posEmb).rmsnorm cfg.epsilon
+  let xInit := (tokEmb + posEmb).rmsnorm cfg.epsilon
   let x : Tensor := p.blocks.foldl (init := xInit) fun acc b =>
     Tensor.mlp mlpCfg (Tensor.attn attnCfg acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
-  (x.linear p.lmHead).maskedCE target mask
+  (x @ p.lmHead).maskedCE target mask
 
 end MicroGPT

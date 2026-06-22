@@ -56,7 +56,7 @@ private def asRows (j : Json) : IO (Array Float × Nat × Nat) := do
     return acc ++ (← cols.mapM asFloat)
   return (flat, r, c)
 
--- Python stores linear weights `[out × in]`, `linearFwd` wants `[in × out]`. Transpose.
+-- Python stores linear weights `[out × in]`, `matmulFwd` wants `[in × out]`. Transpose.
 private def asRowsT (j : Json) : IO (Array Float × Nat × Nat) := do
   let (flat, r, c) ← asRows j
   return (transposeFlat flat r c, c, r)
@@ -90,6 +90,17 @@ Parity entrypoint
 ===--------------------------------------------------------------------------===
 -/
 
+-- tqdm-style in-place bar: `\r` rewrites the same line, flush forces it to show.
+private def progressBar (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
+  let width := 30
+  let filled := (cur * width) / total
+  let bar := String.ofList (List.replicate filled '█') ++ String.ofList (List.replicate (width - filled) ' ')
+  let pct := (cur * 100) / total
+  let rate := if elapsedMs == 0 then 0 else (cur * 1000) / elapsedMs
+  let etaMs := if cur == 0 then 0 else (elapsedMs * (total - cur)) / cur
+  let fmt := fun (ms : Nat) => let s := ms / 1000; let r := s % 60; s!"{s / 60}:" ++ (if r < 10 then s!"0{r}" else s!"{r}")
+  s!"{pct}%|{bar}| {cur}/{total} [{fmt elapsedMs}<{fmt etaMs}, {rate}it/s]"
+
 def main : IO Unit := do
   let raw ← IO.FS.readFile "data/parity.json"
   let j ← match Json.parse raw with
@@ -105,12 +116,16 @@ def main : IO Unit := do
 
   let mut p := initP
   let mut s := OptState.zeros initP
+  let startMs ← IO.monoMsNow
+  let stdout ← IO.getStdout
   for step in [0:cfg.numSteps] do
     let lossT := forward p cfg inputs[step]! targets[step]! masks[step]!
     let (p', s') := adamWStep cfg (step + 1) p s lossT.backward
     p := p'; s := s'
-    if step = 0 || (step + 1) % 100 = 0 then
-      IO.println s!"step {step + 1}/{cfg.numSteps}  loss={lossT.data[0]!}"
+    let elapsed := (← IO.monoMsNow) - startMs
+    IO.print s!"\r{progressBar (step + 1) cfg.numSteps elapsed}  "
+    stdout.flush
+  IO.println ""
 
   let atol : Float := 1e-11
   let atolStr := "1e-11"
@@ -127,13 +142,13 @@ def main : IO Unit := do
       a := a.push (s!"layer{h}.mlp_fc2", b.mlpFc2, r.mlpFc2)
     return a
   let mut failures : Array (String × Float) := #[]
-  let mut cells : Nat := 0
   for (label, a, b) in pairs do
-    cells := cells + a.data.size
     let mx := maxDiff a b
     if mx > atol then failures := failures.push (label, mx)
+  let totalMs := (← IO.monoMsNow) - startMs
   if failures.isEmpty then
-    IO.println s!"PASS: all {cells} weight cells within atol={atolStr}"
+    IO.println s!"passed parity check (atol={atolStr})"
+    IO.println s!"total time: {totalMs / 1000}s"
   else
     for (label, mx) in failures do
       IO.eprintln s!"  {label}: max |Δ| = {mx}"

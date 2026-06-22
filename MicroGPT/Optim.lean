@@ -22,24 +22,24 @@ def OptState.zeros (p : Params) : OptState :=
   let entries := (paramLeaves p).map fun t => (t.id, zerosLike t)
   { m := entries, v := entries }
 
-def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState) (gm : Array (Nat × Array Float)) : Params × OptState :=
+def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState) (gradientMap : Array (Nat × Array Float)) : Params × OptState :=
   let adamCfg := cfg.toAdamWConfig
   let progress : Float := if cfg.numSteps = 0 then 0.0 else (step - 1).toFloat / cfg.numSteps.toFloat
   let lr0 := cfg.lr0 * (1.0 - progress)
   let lr := if lr0 < 0.0 then 0.0 else lr0
-  let (wte', s) := stepOne adamCfg step lr p.wte gm s
-  let (wpe', s) := stepOne adamCfg step lr p.wpe gm s
-  let (lm',  s) := stepOne adamCfg step lr p.lmHead gm s
+  let (wte', s) := stepOne adamCfg step lr p.wte gradientMap s
+  let (wpe', s) := stepOne adamCfg step lr p.wpe gradientMap s
+  let (lm',  s) := stepOne adamCfg step lr p.lmHead gradientMap s
   let (blocks, sFinal) : Array TransformerBlock × OptState := Id.run do
     let mut acc : Array TransformerBlock := #[]
     let mut s' := s
     for b in p.blocks do
-      let (wq, s1) := stepOne adamCfg step lr b.attnWq gm s'; s' := s1
-      let (wk, s2) := stepOne adamCfg step lr b.attnWk gm s'; s' := s2
-      let (wv, s3) := stepOne adamCfg step lr b.attnWv gm s'; s' := s3
-      let (wo, s4) := stepOne adamCfg step lr b.attnWo gm s'; s' := s4
-      let (f1, s5) := stepOne adamCfg step lr b.mlpFc1 gm s'; s' := s5
-      let (f2, s6) := stepOne adamCfg step lr b.mlpFc2 gm s'; s' := s6
+      let (wq, s1) := stepOne adamCfg step lr b.attnWq gradientMap s'; s' := s1
+      let (wk, s2) := stepOne adamCfg step lr b.attnWk gradientMap s'; s' := s2
+      let (wv, s3) := stepOne adamCfg step lr b.attnWv gradientMap s'; s' := s3
+      let (wo, s4) := stepOne adamCfg step lr b.attnWo gradientMap s'; s' := s4
+      let (f1, s5) := stepOne adamCfg step lr b.mlpFc1 gradientMap s'; s' := s5
+      let (f2, s6) := stepOne adamCfg step lr b.mlpFc2 gradientMap s'; s' := s6
       acc := acc.push { attnWq := wq, attnWk := wk, attnWv := wv, attnWo := wo, mlpFc1 := f1, mlpFc2 := f2 }
     return (acc, s')
   ({ wte := wte', wpe := wpe', lmHead := lm', blocks := blocks }, sFinal)

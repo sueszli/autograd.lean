@@ -2,7 +2,7 @@ namespace Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-Linear
+Matmul
 ===--------------------------------------------------------------------------===
 -/
 
@@ -10,7 +10,7 @@ def transposeFlat (x : Array Float) (r c : Nat) : Array Float :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
 -- pre-materialize `x*W` products so the C backend can't contract them into FMA. CPython doesn't FMA, so without this we diverge by tens of ULPs per dot.
-def linearFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array Float :=
+def matmulFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (n * m) 0.0
     for i in [0:n] do
@@ -20,7 +20,7 @@ def linearFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array 
         out := out.set! (i * m + j) (prods.foldl (init := 0.0) (· + ·))
     return out
 
-def linearBwdX (dout : Array Float) (n m : Nat) (W : Array Float) (k : Nat) : Array Float :=
+def matmulBwdX (dout : Array Float) (n m : Nat) (W : Array Float) (k : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (n * k) 0.0
     for i in [0:n] do
@@ -30,7 +30,7 @@ def linearBwdX (dout : Array Float) (n m : Nat) (W : Array Float) (k : Nat) : Ar
         out := out.set! (i * k + kk) s
     return out
 
-def linearBwdW (dout : Array Float) (n m : Nat) (x : Array Float) (k : Nat) : Array Float :=
+def matmulBwdW (dout : Array Float) (n m : Nat) (x : Array Float) (k : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (k * m) 0.0
     for kk in [0:k] do
@@ -220,9 +220,9 @@ structure AttnCache where
 def attnFwd (cfg : AttnConfig) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
   let cols := cfg.nEmbed
   let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
-  let qFlat := linearFwd xn rows cols wq cols
-  let kFlat := linearFwd xn rows cols wk cols
-  let vFlat := linearFwd xn rows cols wv cols
+  let qFlat := matmulFwd xn rows cols wq cols
+  let kFlat := matmulFwd xn rows cols wk cols
+  let vFlat := matmulFwd xn rows cols wv cols
   let qs := splitHeadsFlat qFlat rows cols cfg.nHead
   let ks := splitHeadsFlat kFlat rows cols cfg.nHead
   let vs := splitHeadsFlat vFlat rows cols cfg.nHead
@@ -234,7 +234,7 @@ def attnFwd (cfg : AttnConfig) (xPre : Array Float) (rows : Nat) (wq wk wv wo : 
     for h in [0:cfg.nHead] do
       let q := qs[h]!; let k := ks[h]!; let v := vs[h]!
       let kT := transposeFlat k rows headDim
-      let scores := linearFwd q rows headDim kT rows
+      let scores := matmulFwd q rows headDim kT rows
       let scaled : Array Float := scores.map (· * invScale)
       let masked : Array Float := Id.run do
         let mut acc : Array Float := Array.replicate (rows * rows) 0.0
@@ -245,17 +245,17 @@ def attnFwd (cfg : AttnConfig) (xPre : Array Float) (rows : Nat) (wq wk wv wo : 
         return acc
       let aw := softmaxRows masked rows rows
       aws := aws.push aw
-      outs := outs.push (linearFwd aw rows rows v headDim)
+      outs := outs.push (matmulFwd aw rows rows v headDim)
     (aws, outs)
   let merged := mergeHeadsFlat outs rows cfg.nHead headDim
-  let outFlat := linearFwd merged rows cols wo cols
+  let outFlat := matmulFwd merged rows cols wo cols
   let outRes := maddFlat xPre outFlat
   (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
 
 def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
   let cols := cfg.nEmbed
-  let dMerged := linearBwdX dout rows cols wo cols
-  let dWo := linearBwdW dout rows cols c.outFlat cols
+  let dMerged := matmulBwdX dout rows cols wo cols
+  let dWo := matmulBwdW dout rows cols c.outFlat cols
   let headDim := cols / cfg.nHead
   let dOutHeads := splitHeadsFlat dMerged rows cols cfg.nHead
   let invSqrt := 1.0 / Float.pow headDim.toFloat 0.5
@@ -267,8 +267,8 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
       let aw := c.attnW[h]!
       let q := c.q[h]!; let k := c.k[h]!; let v := c.v[h]!
       let dHead := dOutHeads[h]!
-      let dawH := linearBwdX dHead rows headDim v rows
-      let dvH := linearBwdW dHead rows headDim aw rows
+      let dawH := matmulBwdX dHead rows headDim v rows
+      let dvH := matmulBwdW dHead rows headDim aw rows
       let dScaledH := softmaxRowsBwd aw dawH rows rows invSqrt
       let dScaledMasked : Array Float := Id.run do
         let mut acc := dScaledH
@@ -276,8 +276,8 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
           for j in [0:rows] do
             if j > i then acc := acc.set! (i * rows + j) 0.0
         return acc
-      let dqH := linearFwd dScaledMasked rows rows k headDim
-      let dkH := linearFwd (transposeFlat dScaledMasked rows rows) rows rows q headDim
+      let dqH := matmulFwd dScaledMasked rows rows k headDim
+      let dkH := matmulFwd (transposeFlat dScaledMasked rows rows) rows rows q headDim
       dqs := dqs.push dqH
       dks := dks.push dkH
       dvs := dvs.push dvH
@@ -285,13 +285,13 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
   let dQflat := mergeHeadsFlat dqs rows cfg.nHead headDim
   let dKflat := mergeHeadsFlat dks rows cfg.nHead headDim
   let dVflat := mergeHeadsFlat dvs rows cfg.nHead headDim
-  let dXnQ := linearBwdX dQflat rows cols wq cols
-  let dXnK := linearBwdX dKflat rows cols wk cols
-  let dXnV := linearBwdX dVflat rows cols wv cols
+  let dXnQ := matmulBwdX dQflat rows cols wq cols
+  let dXnK := matmulBwdX dKflat rows cols wk cols
+  let dXnV := matmulBwdX dVflat rows cols wv cols
   let dXn := maddFlat (maddFlat dXnQ dXnK) dXnV
-  let dWq := linearBwdW dQflat rows cols c.xn cols
-  let dWk := linearBwdW dKflat rows cols c.xn cols
-  let dWv := linearBwdW dVflat rows cols c.xn cols
+  let dWq := matmulBwdW dQflat rows cols c.xn cols
+  let dWk := matmulBwdW dKflat rows cols c.xn cols
+  let dWv := matmulBwdW dVflat rows cols c.xn cols
   let dxPre := maddFlat dout (rmsnormBwd dXn c.xPre c.rms rows cols)
   (dxPre, (dWq, dWk, dWv, dWo))
 
@@ -321,17 +321,17 @@ def mlpFwd (cfg : MlpConfig) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array 
   let cols := cfg.nEmbed
   let hidden := 4 * cols
   let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
-  let hPre := linearFwd xn rows cols fc1 hidden
+  let hPre := matmulFwd xn rows cols fc1 hidden
   let h := reluFlat hPre
-  let y := linearFwd h rows hidden fc2 cols
+  let y := matmulFwd h rows hidden fc2 cols
   (maddFlat xPre y, { xPre := xPre, xn := xn, rows := rows, cols := cols, rms := rms, hPre := hPre, h := h, hidden := hidden })
 
 def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array Float × (Array Float × Array Float) :=
-  let dh := linearBwdX dout c.rows c.cols fc2 c.hidden
-  let dfc2 := linearBwdW dout c.rows c.cols c.h c.hidden
+  let dh := matmulBwdX dout c.rows c.cols fc2 c.hidden
+  let dfc2 := matmulBwdW dout c.rows c.cols c.h c.hidden
   let dhPre := reluBwdFlat dh c.hPre
-  let dxn := linearBwdX dhPre c.rows c.hidden fc1 c.cols
-  let dfc1 := linearBwdW dhPre c.rows c.hidden c.xn c.cols
+  let dxn := matmulBwdX dhPre c.rows c.hidden fc1 c.cols
+  let dfc1 := matmulBwdW dhPre c.rows c.hidden c.xn c.cols
   (maddFlat dout (rmsnormBwd dxn c.xPre c.rms c.rows c.cols), (dfc1, dfc2))
 
 end Autograd

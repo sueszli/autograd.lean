@@ -56,9 +56,9 @@ def adamWBuf (cfg : AdamWConfig) (step : Nat) (lr : Float) (p g m v : Array Floa
     p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
-def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gm : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
+def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
   let z := zerosLike t
-  let g := lookup gm t.id z
+  let g := lookup gradientMap t.id z
   let m := lookup s.m t.id z
   let v := lookup s.v t.id z
   let (p', m', v') := adamWBuf cfg step lr t.data g m v
