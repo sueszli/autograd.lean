@@ -55,6 +55,7 @@ Tensor methods
 -/
 
 namespace Tensor
+-- row-major C convention: `shape[0]` rows, `shape[1]` cols. a rank-1 tensor is an `n × 1` column
 def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]!
 def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
 
