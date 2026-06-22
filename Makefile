@@ -1,11 +1,5 @@
-.PHONY: init
-init:
-	printf '#!/bin/sh\nmake precommit\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-
-.PHONY: precommit
-precommit:
-	lake build
-
 .PHONY: run
 run:
+	printf '#!/bin/sh\nlake build\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+	lake build
 	lake exe parity
