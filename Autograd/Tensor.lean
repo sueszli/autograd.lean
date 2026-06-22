@@ -163,7 +163,6 @@ partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gradientMa
   match t.gradFn with
   | .leaf =>
     if t.requiresGrad then gradientMapAdd gradientMap t.id incoming else gradientMap
-  -- feed each call's returned map into the next. `add` splits its gradient unchanged to both inputs.
   | .addOp a b =>
     let gradientMap := a.backwardAcc incoming gradientMap
     b.backwardAcc incoming gradientMap
