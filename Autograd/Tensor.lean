@@ -99,7 +99,6 @@ def mlp (cfg : MlpConfig) (xPre fc1 fc2 : Tensor) : Tensor :=
   let (out, cache) := mlpFwd cfg xPre.data xPre.rows fc1.data fc2.data
   { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache cfg }
 
--- scalar loss tensor, `backward` starts from a `[1.0]` buffer
 def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=
   let probs := softmaxRows logits.data logits.rows logits.cols
   let sumMask := mask.foldl (init := 0.0) (· + ·)
