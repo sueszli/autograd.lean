@@ -120,27 +120,33 @@ where each entry is `(t.id, gradient of t.data)`.
   let b := Tensor.leaf #[3,4] .. (id := 1)   -- b.data = [3,4]
   let c := a + b + a                         -- a is used twice
 
-forward builds this graph (each node links back to its inputs via `gradFn`):
+`forward` builds this graph (each node links back to its inputs via `gradFn`):
 
-        c                  backprop starts here with seed #[1,1]
-       / \                 each `+` copies its gradient to both inputs unchanged,
-    (a+b) a                so the gradient flows down to the leaves
+        c                  backprop starts here with seed #[1,1].
+       / \
+    (a+b) a                gradient flows down to the leaves.
      / \
     a   b                  `a` is a shared leaf: reached via the left subtree
-                           AND the right branch, so its two gradients sum
+                           AND the right branch, so it has two gradients sum.
 
   c.backwardAcc #[1,1] #[]
   --            ^^^^^^      gradient to start from, all 1s because backprop begins at c
   --                   ^^^  empty map to fill
 
-  #[]                                        -- map starts empty
-  #[(0, #[1,1])]                             -- reached a (id 0): not present yet, append
-  #[(0, #[1,1]), (1, #[1,1])]                -- reached b (id 1): not present yet, append
-  #[(0, #[2,2]), (1, #[1,1])]                -- reached a again (id 0): already present, so sum -> [2,2]
+the `gradientMap` evolves as the walk reaches each leaf, last line is the return value:
+
+  #[]                               -- map starts empty
+  #[(0, #[1,1])]                    -- reached a (id 0): not present yet, append
+  #[(0, #[1,1]), (1, #[1,1])]       -- reached b (id 1): not present yet, append
+  #[(0, #[2,2]), (1, #[1,1])]       -- reached a again (id 0): already present, so sum -> [2,2]
 
 Each `#[1,1]` is the gradient of that tensor's `.data` (same length).
 `gradientMapAdd` sums into an entry if its `id` is already present, else appends.
-The optimizer pulls a weight's gradient by its `id`.
+
+The optimizer pulls a weight's gradient out of the final map by its `id`:
+
+  lookup gradientMap a.id   -- a.id = 0 -> #[2,2]
+  lookup gradientMap b.id   -- b.id = 1 -> #[1,1]
 ===--------------------------------------------------------------------------===
 -/
 
