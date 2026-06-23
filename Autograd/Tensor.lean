@@ -26,7 +26,7 @@ Mirrors the C struct from https://github.com/sueszli/autograd.c
 mutual
 structure Tensor where
   data : Array Float
-  shape : Array Nat
+  shape : Array Nat -- `shape[0]` rows, `shape[1]` cols
   id : Nat
   requiresGrad : Bool
   gradFn : GradFn
@@ -47,7 +47,7 @@ instance : Inhabited GradFn := ⟨.leaf⟩
 
 namespace Tensor
 
-def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]! -- `shape[0]` rows, `shape[1]` cols
+def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]!
 def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
 def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor := { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
 
@@ -108,13 +108,13 @@ theorem matmul_shape (x : Tensor) (w : Tensor) : (x @ w).shape = #[x.rows, w.col
 theorem gather_requiresGrad (table : Tensor) (ids : Array Nat) : (table.gather ids).requiresGrad = table.requiresGrad := rfl
 theorem rmsnorm_shape (a : Tensor) (eps : Float) : (a.rmsnorm eps).shape = a.shape := rfl
 theorem maskedCE_requiresGrad (logits : Tensor) (targets : Array Nat) (mask : Array Float) : (logits.maskedCE targets mask).requiresGrad = logits.requiresGrad := rfl
+theorem add_no_grad : (Tensor.leaf #[1, 2] 1 2 0 false + Tensor.leaf #[3, 4] 1 2 1 false).requiresGrad = false := rfl
+theorem matmul_taints_grad : ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 false) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).requiresGrad = true := rfl
 
-#guard let c := Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 false; arrApproxEq c.data #[4, 6] && c.requiresGrad  -- `add` sums, ORs `requiresGrad`
-#guard !(Tensor.leaf #[1, 2] 1 2 0 false + Tensor.leaf #[3, 4] 1 2 1 false).requiresGrad  -- no input tracks grad, neither does the sum
-#guard ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 false) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).requiresGrad  -- one tracked operand taints the matmul
-#guard let t := (Tensor.leaf #[10, 11, 20, 21, 30, 31] 3 2 0 true).gather #[2, 0]; arrApproxEq t.data #[30, 31, 10, 11] && t.shape == #[2, 2]  -- `gather` picks rows 2, 0
-#guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]  -- `@` matmul
-#guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]  -- uniform logits cost `-log 0.5`, `[1,1]` scalar
+#guard let c := Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 false; arrApproxEq c.data #[4, 6] && c.requiresGrad
+#guard let t := (Tensor.leaf #[10, 11, 20, 21, 30, 31] 3 2 0 true).gather #[2, 0]; arrApproxEq t.data #[30, 31, 10, 11] && t.shape == #[2, 2]
+#guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]
+#guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]
 
 /-!
 ===--------------------------------------------------------------------------===

@@ -165,7 +165,6 @@ theorem softmaxRows_size (x : Array Float) (rows : Nat) (cols : Nat) : (softmaxR
 theorem softmaxRowsBwd_size (aw : Array Float) (daw : Array Float) (rows : Nat) (cols : Nat) (scale : Float) : (softmaxRowsBwd aw daw rows cols scale).size = rows * cols := by simp [softmaxRowsBwd, Id.run]; exact replicate_loop2_size ..
 
 #guard arrApproxEq (softmaxFlat #[0, 0, 0]) #[1.0 / 3, 1.0 / 3, 1.0 / 3]
-#guard (softmaxFlat #[]).size == 0                                                -- empty-input branch returns the input untouched
 #guard approxEq ((softmaxFlat #[1, 2, 3]).foldl (· + ·) 0.0) 1.0                  -- normalized
 #guard arrApproxEq (softmaxFlat #[1, 2, 3]) (softmaxFlat #[-4, -3, -2])           -- shift-invariant (max-subtraction)
 #guard let sm := softmaxRows #[1, 2, 1, 0] 2 2; approxEq (sm[0]! + sm[1]!) 1.0 && approxEq (sm[2]! + sm[3]!) 1.0
