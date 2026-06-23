@@ -35,7 +35,9 @@ def Config.toAdamWConfig (c : Config) : AdamWConfig :=
   { beta1 := c.beta1, beta2 := c.beta2 }
 
 -- the per-op config projections copy the relevant fields out of the master `Config`
-#guard let c : Config := { nLayer := 1, nEmbed := 16, blockSize := 8, nHead := 4, vocabSize := 10, numSteps := 5 }; c.toAttnConfig.nEmbed == 16 && c.toAttnConfig.nHead == 4 && c.toMlpConfig.nEmbed == 16
+theorem toAttnConfig_nEmbed (c : Config) : c.toAttnConfig.nEmbed = c.nEmbed := rfl
+theorem toAttnConfig_nHead (c : Config) : c.toAttnConfig.nHead = c.nHead := rfl
+theorem toMlpConfig_nEmbed (c : Config) : c.toMlpConfig.nEmbed = c.nEmbed := rfl
 #guard let c : Config := { nLayer := 1, nEmbed := 16, blockSize := 8, nHead := 4, vocabSize := 10, numSteps := 5 }; approxEq c.toAdamWConfig.beta1 0.85 && approxEq c.toAdamWConfig.beta2 0.99
 
 /-!
@@ -60,7 +62,7 @@ structure Params where
   blocks : Array TransformerBlock
   deriving Inhabited
 
-#guard (default : Params).blocks.size == 0
+theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl
 #guard let p : Params := { wte := Tensor.leaf #[1] 1 1 0 true, wpe := Tensor.leaf #[2] 1 1 1 true, lmHead := Tensor.leaf #[3] 1 1 2 true, blocks := #[] }; arrApproxEq p.wte.data #[1] && p.blocks.size == 0
 
 /-!
@@ -93,16 +95,16 @@ theorem blocks_disjoint (h : Nat) : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) 
 theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by
   unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
 
-#guard ParamIds.wte == 0 && ParamIds.wpe == 1 && ParamIds.lmHead == 2
-#guard ParamIds.attnWq 0 == 3 && ParamIds.mlpFc2 0 == 8                        -- block 0 occupies ids 3..8
-#guard ParamIds.blockBase 1 == 9 && ParamIds.attnWq 1 == 9                     -- block 1 starts right after, no overlap
+theorem global_ids : ParamIds.wte = 0 ∧ ParamIds.wpe = 1 ∧ ParamIds.lmHead = 2 := ⟨rfl, rfl, rfl⟩
+theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩                  -- block 0 occupies ids 3..8
+theorem block1_ids : ParamIds.blockBase 1 = 9 ∧ ParamIds.attnWq 1 = 9 := ⟨rfl, rfl⟩               -- block 1 starts right after, no overlap
 
 /-!
 ===--------------------------------------------------------------------------===
 Parameter id injectivity
 
-The guards above check a few ids; these prove the layout is collision-free for
-EVERY model size. `Slot` enumerates the parameter slots (3 globals plus 6 roles
+The theorems above pin a few concrete ids; these prove the layout is
+collision-free for EVERY model size. `Slot` enumerates the parameter slots (3 globals plus 6 roles
 per block), `Slot.id` mirrors the `ParamIds` assignment, and the theorems show
 that map is injective and that `allIds` is exactly `List.range (3 + 6n)`: a
 gap-free bijection onto the gradient-buffer indices, so `backwardAcc` can never

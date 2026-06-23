@@ -55,11 +55,11 @@ theorem leaf_rows (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool
 theorem leaf_cols (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).cols = c := rfl
 theorem leaf_data (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).data = data := rfl
 theorem leaf_id (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).id = id := rfl
-
-#guard (default : Tensor).data.size == 0 && (default : Tensor).requiresGrad == false
-#guard match (default : GradFn) with | .leaf => true | _ => false
-#guard let t := Tensor.leaf #[1, 2, 3, 4, 5, 6] 2 3 7 true; t.rows == 2 && t.cols == 3 && t.id == 7 && t.requiresGrad
-#guard ({ data := #[9], shape := #[3], id := 0, requiresGrad := false, gradFn := .leaf } : Tensor).cols == 1
+theorem leaf_requiresGrad (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).requiresGrad = rg := rfl
+theorem default_data_empty : (default : Tensor).data.size = 0 := rfl
+theorem default_no_grad : (default : Tensor).requiresGrad = false := rfl
+theorem default_gradfn_leaf : (default : GradFn) = .leaf := rfl
+theorem cols_rank1 (t : Tensor) (h : t.shape.size < 2) : t.cols = 1 := by unfold cols; exact if_pos h
 
 /-!
 ===--------------------------------------------------------------------------===

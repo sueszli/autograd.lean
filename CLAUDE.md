@@ -1,6 +1,6 @@
 # Thinking Guidelines
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+Behavioral guidelines to reduce common LLM coding mistakes.
 
 Tradeoff: These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
@@ -62,28 +62,25 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 These guidelines are working if: fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
-# Coding Guidelines
+# Lean Coding Guidelines
 
 Simplicity:
 
-- no code > simple code > clever code
+- no code > simple code > clever code. we want the minimum viable diff
 - more dependencies is better than more code
 - minimize indentation: guard first programming, early returns, happy path first
 - maximize for code locality: a little duplication is okay. inline small functions (<5 LoC). no module-level globals or top-level helpers unless reused in multiple places
-- avoid OOP primitives like classes and inheritance where possible
-- minimum viable diff. no schedulers, no early stopping, no eval-during-train
-- no shared utility modules. each standalone script duplicates its own boilerplate
 - no line width limit. keep one logical statement on one line. do not split for length
+- comments are used sparsely and give non-obvious context that an LLM couldn't infer. section headers consist of `/-!` + 80-wide `===---...---===` rule + plain title + `-/`. title-only by default
+
+Correctness:
+
+- testing. each code section (seperated by a comment header) must have `#theorem` and `#guard` statements that verify and test its behavior.
+- precommit hook. each push runs the full test suite and verifies the codebase.
 
 Performance:
 
 - have mechanistic sympathy, design with data oriented programming best-practices
-
-Comments:
-
-- comments give overview/context, not detail. keep only non-obvious WHY (parity, invariants). drop signature/formula restatements
-- backtick code references in comments (identifiers, formulas, shape notation)
-- section headers: `/-!` + 80-wide `===---...---===` rule + plain title + same rule + `-/`. title-only by default. overrides "no heavy dividers"
 
 # Writing Guidelines
 
