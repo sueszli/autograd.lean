@@ -45,28 +45,19 @@ end
 instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
 instance : Inhabited GradFn := ⟨.leaf⟩
 
-#guard (default : Tensor).data.size == 0 && (default : Tensor).requiresGrad == false
-#guard match (default : GradFn) with | .leaf => true | _ => false
-
-/-!
-===--------------------------------------------------------------------------===
-Tensor methods
-===--------------------------------------------------------------------------===
--/
-
 namespace Tensor
--- row-major C convention: `shape[0]` rows, `shape[1]` cols. a rank-1 tensor is an `n × 1` column
-def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]!
-def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
 
-def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor :=
-  { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
+def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]! -- `shape[0]` rows, `shape[1]` cols
+def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
+def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor := { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
 
 theorem leaf_rows (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).rows = r := rfl
 theorem leaf_cols (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).cols = c := rfl
 theorem leaf_data (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).data = data := rfl
 theorem leaf_id (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).id = id := rfl
 
+#guard (default : Tensor).data.size == 0 && (default : Tensor).requiresGrad == false
+#guard match (default : GradFn) with | .leaf => true | _ => false
 #guard let t := Tensor.leaf #[1, 2, 3, 4, 5, 6] 2 3 7 true; t.rows == 2 && t.cols == 3 && t.id == 7 && t.requiresGrad
 #guard ({ data := #[9], shape := #[3], id := 0, requiresGrad := false, gradFn := .leaf } : Tensor).cols == 1
 
@@ -110,8 +101,6 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
   { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
 
--- `requiresGrad` propagation: an op tracks gradients iff any input does. shape propagation:
--- `add`/`rmsnorm` keep the input shape, `matmul` produces `[rows × cols]`.
 theorem add_requiresGrad (a : Tensor) (b : Tensor) : (a + b).requiresGrad = (a.requiresGrad || b.requiresGrad) := rfl
 theorem add_shape (a : Tensor) (b : Tensor) : (a + b).shape = a.shape := rfl
 theorem matmul_requiresGrad (x : Tensor) (w : Tensor) : (x @ w).requiresGrad = (x.requiresGrad || w.requiresGrad) := rfl
@@ -127,8 +116,6 @@ theorem maskedCE_requiresGrad (logits : Tensor) (targets : Array Nat) (mask : Ar
 #guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]  -- `@` matmul
 #guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]  -- uniform logits cost `-log 0.5`, `[1,1]` scalar
 
-end Tensor
-
 /-!
 ===--------------------------------------------------------------------------===
 Backward
@@ -137,18 +124,20 @@ Immutable tensors have no `.grad` field.
 `backwardAcc` returns a `gradientMap` of type `Array (Nat × Array Float)`
 where each entry is `(t.id, gradient of t.data)`.
 
-  let a := Tensor.leaf #[1,2] .. (id := 0)   -- a.data = [1,2]
-  let b := Tensor.leaf #[3,4] .. (id := 1)   -- b.data = [3,4]
-  let c := a + b + a                         -- a is used twice
+  let a := Tensor.leaf #[1,2] .. (id := 0)       -- a.data = [1,2]
+  let b := Tensor.leaf #[3,4] .. (id := 1)       -- b.data = [3,4]
+  let c := a + b + a                             -- a is used twice
 
 `forward` builds this graph (each node links back to its inputs via `gradFn`):
 
-        c                  backprop starts here with seed #[1,1].
+        c
        / \
-    (a+b) a                gradient flows down to the leaves.
+    (a+b) a
      / \
-    a   b                  `a` is a shared leaf: reached via the left subtree
-                           AND the right branch, so it has two gradients sum.
+    a   b
+
+backprop starts here with seed #[1,1] and the gradient flows down to the leaves.
+`a` is a shared and reached via two paths, so it has two gradients sum.
 
   c.backwardAcc #[1,1] #[]
   --            ^^^^^^      gradient to start from, all 1s because backprop begins at c
@@ -166,8 +155,8 @@ Each `#[1,1]` is the gradient of that tensor's `.data` (same length).
 
 The optimizer pulls a weight's gradient out of the final map by its `id`:
 
-  lookup gradientMap a.id   -- a.id = 0 -> #[2,2]
-  lookup gradientMap b.id   -- b.id = 1 -> #[1,1]
+  lookup gradientMap a.id       -- a.id = 0 -> #[2,2]
+  lookup gradientMap b.id       -- b.id = 1 -> #[1,1]
 ===--------------------------------------------------------------------------===
 -/
 
@@ -176,7 +165,7 @@ private def gradientMapAdd (gradientMap : Array (Nat × Array Float)) (id : Nat)
   | some i => gradientMap.set! i (id, maddFlat gradientMap[i]!.2 g)
   | none => gradientMap.push (id, g)
 
-partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
+partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
   match t.gradFn with
   | .leaf =>
     if t.requiresGrad then gradientMapAdd gradientMap t.id incoming else gradientMap
@@ -212,35 +201,8 @@ partial def Tensor.backwardAcc (t : Tensor) (incoming : Array Float) (gradientMa
     let gradientMap := fc1.backwardAcc df1 gradientMap
     fc2.backwardAcc df2 gradientMap
 
-def Tensor.backward (loss : Tensor) : Array (Nat × Array Float) :=
+def backward (loss : Tensor) : Array (Nat × Array Float) :=
   loss.backwardAcc #[1.0] #[]
-
--- the shared-leaf example from the section doc: `a` (id 0) is reached twice in `a + b + a`,
--- so its gradient accumulates to `[2,2]` while `b` (id 1) stays at `[1,1]`
-#guard
-  let gm := (Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 true + Tensor.leaf #[1, 2] 1 2 0 true).backwardAcc #[1, 1] #[]
-  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
-  arrApproxEq (get 0) #[2, 2] && arrApproxEq (get 1) #[1, 1]
--- matmul backward: `dx = dout @ wᵀ`, `dw = xᵀ @ dout` (here `w = I` so `dx = dout`)
-#guard
-  let gm := ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 0, 0, 1] 2 2 1 true)).backwardAcc #[1, 1, 1, 1] #[]
-  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
-  arrApproxEq (get 0) #[1, 1, 1, 1] && arrApproxEq (get 1) #[4, 4, 6, 6]
--- `backward` seeds `[1.0]`; cross-entropy gradient `probs - onehot` sums to zero across the row
-#guard
-  let gm := ((Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]).backward
-  let g := (gm.find? (fun p => p.1 == 0)).map (·.2) |>.getD #[]
-  approxEq (g[0]! + g[1]!) 0.0
-
-/-!
-===--------------------------------------------------------------------------===
-Gradient-map accumulation invariants
-
-`gradientMapAdd` is the merge step every `backwardAcc` branch routes through.
-These prove it accumulates correctly for shared leaves and never clobbers or
-invents ids: the id set after an add is exactly the old set plus `{id}`.
-===--------------------------------------------------------------------------===
--/
 
 -- append base case: an unseen `id` becomes a new trailing entry holding `g` verbatim.
 theorem gradientMapAdd_fresh (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (h : gm.findIdx? (fun (i, _) => i = id) = none) : gradientMapAdd gm id g = gm.push (id, g) := by
@@ -304,5 +266,24 @@ theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (
       left; rw [← hpj, ← hkp]
     · rw [Array.getElem_setIfInBounds_ne hk hik] at hkp
       exact Or.inr ⟨p, Array.mem_iff_getElem.mpr ⟨k, hk, hkp⟩, hpj⟩
+
+-- the shared-leaf example from the section doc: `a` (id 0) is reached twice in `a + b + a`,
+-- so its gradient accumulates to `[2,2]` while `b` (id 1) stays at `[1,1]`
+#guard
+  let gm := (Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 true + Tensor.leaf #[1, 2] 1 2 0 true).backwardAcc #[1, 1] #[]
+  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
+  arrApproxEq (get 0) #[2, 2] && arrApproxEq (get 1) #[1, 1]
+-- matmul backward: `dx = dout @ wᵀ`, `dw = xᵀ @ dout` (here `w = I` so `dx = dout`)
+#guard
+  let gm := ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 0, 0, 1] 2 2 1 true)).backwardAcc #[1, 1, 1, 1] #[]
+  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
+  arrApproxEq (get 0) #[1, 1, 1, 1] && arrApproxEq (get 1) #[4, 4, 6, 6]
+-- `backward` seeds `[1.0]`; cross-entropy gradient `probs - onehot` sums to zero across the row
+#guard
+  let gm := ((Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]).backward
+  let g := (gm.find? (fun p => p.1 == 0)).map (·.2) |>.getD #[]
+  approxEq (g[0]! + g[1]!) 0.0
+
+end Tensor
 
 end Autograd
