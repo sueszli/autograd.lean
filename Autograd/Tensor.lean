@@ -160,10 +160,7 @@ theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K) :
   | zero => rfl
   | succ n ih => rw [Array.range_succ, Array.foldl_append, ih, Finset.sum_range_succ]; simp
 
-theorem idx_bound (a : Nat) (b : Nat) (p : Nat) (q : Nat) (ha : a < p) (hb : b < q) : a * q + b < p * q := by
-  have h1 : a * q + b < (a + 1) * q := by rw [Nat.add_mul, Nat.one_mul]; omega
-  have h2 : (a + 1) * q ≤ p * q := by gcongr; omega
-  omega
+theorem idx_bound (a : Nat) (b : Nat) (p : Nat) (q : Nat) (ha : a < p) (hb : b < q) : a * q + b < p * q := by nlinarith
 
 -- the running forward kernel `matmulFwd` reads as `Matrix.mul`. with the adjoint lemmas above, this is what makes "the matmul the engine runs is the verified one" true rather than a parallel claim.
 theorem matmulFwd_bridge {K : Type} [CommRing K] [Inhabited K] (x : Array K) (W : Array K) (n : Nat) (k : Nat) (m : Nat) : toMat (matmulFwd x n k W m) n m = toMat x n k * toMat W k m := by
@@ -399,9 +396,7 @@ theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Arr
   split
   case h_1 i h =>
     have hi : i < gm.size := (Array.findIdx?_eq_some_iff_getElem.mp h).1
-    refine ⟨(id, maddFlat gm[i]!.2 g), ?_, rfl⟩
-    rw [Array.set!_eq_setIfInBounds]
-    exact Array.mem_setIfInBounds hi
+    exact ⟨(id, maddFlat gm[i]!.2 g), by rw [Array.set!_eq_setIfInBounds]; exact Array.mem_setIfInBounds hi, rfl⟩
   case h_2 h => exact ⟨(id, g), by simp, rfl⟩
 
 -- no-clobber: adding one leaf's gradient never drops any other leaf already in the map, so after a full backward pass every parameter that got a gradient still has it.

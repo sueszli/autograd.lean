@@ -87,18 +87,13 @@ theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Arra
     rw [Array.findIdx_eq hilt] at hfind
     obtain ⟨_, hearlier⟩ := hfind
     have hset : (a.set! i (id, x)).find? (fun (i, _) => i = id) = some (id, x) := by
-      rw [Array.set!_eq_setIfInBounds]
-      rw [Array.find?_eq_some_iff_getElem]
+      rw [Array.set!_eq_setIfInBounds, Array.find?_eq_some_iff_getElem]
       have hisz : i < (a.setIfInBounds i (id, x)).size := by rw [Array.size_setIfInBounds]; exact hilt
-      refine ⟨by simp, i, hisz, ?_, ?_⟩
-      · rw [Array.getElem_setIfInBounds hilt]; simp
-      · intro j hj
-        have hjlt : j < a.size := by omega
-        rw [Array.getElem_setIfInBounds hjlt]
-        have hij : i ≠ j := by omega
-        simp only [hij, if_false]
-        have := hearlier j hj
-        simpa using this
+      refine ⟨by simp, i, hisz, by rw [Array.getElem_setIfInBounds hilt]; simp, ?_⟩
+      intro j hj
+      have hjlt : j < a.size := by omega
+      rw [Array.getElem_setIfInBounds hjlt]
+      grind
     rw [hset]
 
 -- updating one parameter's Adam state can NEVER corrupt or shadow another's: a lookup of a different
@@ -138,10 +133,7 @@ theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat
 
 -- overwriting an existing key keeps the buffer count fixed, so the moment table cannot leak slots across steps.
 theorem upsert_size_existing (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hmem : (a.findIdx? (fun (i, _) => i = id)).isSome = true) : (upsert a id x).size = a.size := by
-  unfold upsert
-  cases hf : a.findIdx? (fun (i, _) => i = id) with
-  | none => rw [hf] at hmem; simp at hmem
-  | some i => simp only []; rw [Array.set!_eq_setIfInBounds, Array.size_setIfInBounds]
+  unfold upsert; split <;> grind [Array.size_setIfInBounds]
 
 -- a genuinely fresh key (no slot matches it) grows the buffer by exactly one.
 theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hfresh : ∀ (k : Nat) (hk : k < a.size), a[k].1 ≠ id) : (upsert a id x).size = a.size + 1 := by
