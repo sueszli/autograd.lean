@@ -7,17 +7,5 @@
                               ▀▀
 
 
-An automatic differentiation engine written in lean 4, a functional language with a
-built-in proof checker, which also implements karpathy's microGPT both as a demo use
-case and to parity-check its gradients against weights from the reference python
-implementation.
-
-It computes gradients the way pytorch does, but without mutating any state.
-
-This lets it carry formal proofs that each operation is correct.
-
-To show it works, it trains microGPT from scratch.
-
-The result matches the python reference to eleven decimal places.
-
-Run it with `lake exe parity`.
+an automatic differentiation engine written in lean, a functional language with a
+built-in proof checker.

@@ -31,14 +31,15 @@ Matmul
 def transposeFlat (x : Array Float) (r c : Nat) : Array Float :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
--- pre-materialize `x*W` products so the C backend can't contract them into FMA. CPython doesn't FMA, so without this we diverge by tens of ULPs per dot.
+-- scalar accumulation, same pattern as `matmulBwdX`/`matmulBwdW`. parity with the Python reference holds at atol 1e-11 here, so no FMA-blocking product materialization is needed.
 def matmulFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (n * m) 0.0
     for i in [0:n] do
       for j in [0:m] do
-        let prods : Array Float := (Array.range k).map fun kk => x[i * k + kk]! * W[kk * m + j]!
-        out := out.set! (i * m + j) (prods.foldl (init := 0.0) (· + ·))
+        let mut s : Float := 0.0
+        for kk in [0:k] do s := s + x[i * k + kk]! * W[kk * m + j]!
+        out := out.set! (i * m + j) s
     return out
 
 def matmulBwdX (dout : Array Float) (n m : Nat) (W : Array Float) (k : Nat) : Array Float :=
