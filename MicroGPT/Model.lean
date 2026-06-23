@@ -162,9 +162,9 @@ theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id) : s = t := by
 -- strengthening: every in-bounds slot (`h < n`) lands inside the dense buffer range `[0, 3 + 6n)`; with `id_injective` this makes `Slot.id` a bijection onto the gradient-buffer indices.
 theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h < n) : s.id < 3 + 6 * n := by
   cases s with
-  | wte => simp [Slot.id, ParamIds.wte]; omega
-  | wpe => simp [Slot.id, ParamIds.wpe]; omega
-  | lmHead => simp [Slot.id, ParamIds.lmHead]; omega
+  | wte => simp only [Slot.id, ParamIds.wte]; omega
+  | wpe => simp only [Slot.id, ParamIds.wpe]; omega
+  | lmHead => simp only [Slot.id, ParamIds.lmHead]; omega
   | block h r =>
     have := hb h r rfl
     have := r.offset_lt

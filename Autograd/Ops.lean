@@ -14,12 +14,12 @@ for every input: the invariant the flat-buffer `i * cols + j` indexing relies on
 ===--------------------------------------------------------------------------===
 -/
 
-theorem foldl_size_pres {α : Type} (l : List α) (init : Array Float) (f : Array Float → α → Array Float) (hf : ∀ b a, (f b a).size = b.size) : (l.foldl f init).size = init.size := by
+theorem foldl_size_pres {α : Type} {K : Type} (l : List α) (init : Array K) (f : Array K → α → Array K) (hf : ∀ b a, (f b a).size = b.size) : (l.foldl f init).size = init.size := by
   induction l generalizing init with
   | nil => rfl
   | cons x xs ih => rw [List.foldl_cons, ih, hf]
 
-theorem replicate_loop2_size {α : Type} {β : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : Float) (g : Array Float → α → β → Nat) (h : Array Float → α → β → Float) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n :=
+theorem replicate_loop2_size {α : Type} {β : Type} {K : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : K) (g : Array K → α → β → Nat) (h : Array K → α → β → K) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n :=
   (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
 
 /-!
@@ -28,47 +28,27 @@ Matmul
 ===--------------------------------------------------------------------------===
 -/
 
-def transposeFlat (x : Array Float) (r c : Nat) : Array Float :=
+def transposeFlat {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : Array K :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
 -- scalar accumulation, same pattern as `matmulBwdX`/`matmulBwdW`. parity with the Python reference holds at atol 1e-11 here, so no FMA-blocking product materialization is needed.
-def matmulFwd (x : Array Float) (n k : Nat) (W : Array Float) (m : Nat) : Array Float :=
-  Id.run do
-    let mut out : Array Float := Array.replicate (n * m) 0.0
-    for i in [0:n] do
-      for j in [0:m] do
-        let mut s : Float := 0.0
-        for kk in [0:k] do s := s + x[i * k + kk]! * W[kk * m + j]!
-        out := out.set! (i * m + j) s
-    return out
+-- output cell `idx = i*m+j` (i = idx/m, j = idx%m) is the left-fold `∑ kk, x[i*k+kk] * W[kk*m+j]`. the left-fold order is the `Float` accumulation order, so this is bit-identical to the imperative loop and `matmulFwd_bridge` lifts it to `Matrix.mul` over a `CommRing`.
+def matmulFwd {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : Array K :=
+  (Array.range (n * m)).map fun idx => (Array.range k).foldl (fun s kk => s + x[(idx / m) * k + kk]! * W[kk * m + (idx % m)]!) (0 : K)
 
-def matmulBwdX (dout : Array Float) (n m : Nat) (W : Array Float) (k : Nat) : Array Float :=
-  Id.run do
-    let mut out : Array Float := Array.replicate (n * k) 0.0
-    for i in [0:n] do
-      for kk in [0:k] do
-        let mut s : Float := 0.0
-        for j in [0:m] do s := s + dout[i * m + j]! * W[kk * m + j]!
-        out := out.set! (i * k + kk) s
-    return out
+def matmulBwdX {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : Array K :=
+  (Array.range (n * k)).map fun idx => (Array.range m).foldl (fun s j => s + dout[(idx / k) * m + j]! * W[(idx % k) * m + j]!) (0 : K)
 
-def matmulBwdW (dout : Array Float) (n m : Nat) (x : Array Float) (k : Nat) : Array Float :=
-  Id.run do
-    let mut out : Array Float := Array.replicate (k * m) 0.0
-    for kk in [0:k] do
-      for j in [0:m] do
-        let mut s : Float := 0.0
-        for i in [0:n] do s := s + x[i * k + kk]! * dout[i * m + j]!
-        out := out.set! (kk * m + j) s
-    return out
+def matmulBwdW {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : Array K :=
+  (Array.range (k * m)).map fun idx => (Array.range n).foldl (fun s i => s + x[i * k + (idx / m)]! * dout[i * m + (idx % m)]!) (0 : K)
 
-theorem transposeFlat_size (x : Array Float) (r : Nat) (c : Nat) : (transposeFlat x r c).size = c * r := by simp [transposeFlat]
-theorem matmulFwd_size (x : Array Float) (n : Nat) (k : Nat) (W : Array Float) (m : Nat) : (matmulFwd x n k W m).size = n * m := by simp [matmulFwd, Id.run]; exact replicate_loop2_size ..
-theorem matmulBwdX_size (dout : Array Float) (n : Nat) (m : Nat) (W : Array Float) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX, Id.run]; exact replicate_loop2_size ..
-theorem matmulBwdW_size (dout : Array Float) (n : Nat) (m : Nat) (x : Array Float) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW, Id.run]; exact replicate_loop2_size ..
+theorem transposeFlat_size {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : (transposeFlat x r c).size = c * r := by simp [transposeFlat]
+theorem matmulFwd_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : (matmulFwd x n k W m).size = n * m := by simp [matmulFwd]
+theorem matmulBwdX_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX]
+theorem matmulBwdW_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW]
 
 -- reading index `k` of a `(Array.range n).map f` buffer is `f k` when `k` is in range. the `i * cols + j` flat indexing relies on this, and `x[...]!` hides it behind a `getD default`, so pin it once.
-theorem map_range_getElem! (f : Nat → Float) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by
+theorem map_range_getElem! {K : Type} [Inhabited K] (f : Nat → K) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by
   rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
 
 -- defining property of transpose: output cell `(row j, col i)` holds input cell `(row i, col j)`. certifies the index permutation is exactly the matrix transpose, with no off-by-one in the `i * c + j` encode/decode.
@@ -110,7 +90,7 @@ Element-wise
 ===--------------------------------------------------------------------------===
 -/
 
-def maddFlat (a b : Array Float) : Array Float :=
+def maddFlat {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : Array K :=
   (Array.range a.size).map fun i => a[i]! + b[i]!
 
 def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z else 0.0
@@ -118,7 +98,7 @@ def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z
 def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
 
-theorem maddFlat_size (a : Array Float) (b : Array Float) : (maddFlat a b).size = a.size := by simp [maddFlat]
+theorem maddFlat_size {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : (maddFlat a b).size = a.size := by simp [maddFlat]
 theorem reluFlat_size (x : Array Float) : (reluFlat x).size = x.size := by simp [reluFlat]
 theorem reluBwdFlat_size (dout : Array Float) (hPre : Array Float) : (reluBwdFlat dout hPre).size = dout.size := by simp [reluBwdFlat]
 
@@ -213,12 +193,12 @@ Embedding scatter
 
 -- data is flat row-major, so decode output index `k` to 2D via `/ cols` and `% cols`,
 -- then re-encode the source cell as `srcRow * cols + col`. duplicate ids are fine
-def gatherFlat (table : Array Float) (cols : Nat) (ids : Array Nat) : Array Float :=
+def gatherFlat {K : Type} [Inhabited K] (table : Array K) (cols : Nat) (ids : Array Nat) : Array K :=
   (Array.range (ids.size * cols)).map fun k => table[ids[k / cols]! * cols + k % cols]!
 
-def scatterAddFlat (rows cols : Nat) (grad : Array Float) (ids : Array Nat) : Array Float :=
+def scatterAddFlat {K : Type} [Add K] [Zero K] [Inhabited K] (rows : Nat) (cols : Nat) (grad : Array K) (ids : Array Nat) : Array K :=
   Id.run do
-    let mut out : Array Float := Array.replicate (rows * cols) 0.0
+    let mut out : Array K := Array.replicate (rows * cols) (0 : K)
     for i in [0:ids.size] do
       let id := ids[i]!
       for j in [0:cols] do

@@ -1,6 +1,11 @@
 name = "autograd"
 defaultTargets = ["Autograd", "MicroGPT", "parity"]
 
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "v4.31.0"
+
 [[lean_lib]]
 name = "Autograd"
 globs = ["Autograd.+"]
