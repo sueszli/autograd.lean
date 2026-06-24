@@ -73,6 +73,12 @@ Simplicity:
 - no line width limit. keep one logical statement on one line. do not split for length
 - comments are used sparsely and give non-obvious context that an LLM couldn't infer. section headers consist of `/-!` + 80-wide `===---...---===` rule + plain title + `-/`. title-only by default
 
+Structure:
+
+- a section is a `/-!` header (above) then, in order: definitions, theorems, `#guard`/`#eval` tests.
+- theorems split into two clusters: real proofs first (blank-separated), then trivial `rfl`/one-line checks tight together.
+- a `-- tests` line opens the test region (the trivial cluster and the guards), which stay adjacent with no blank line.
+
 Correctness:
 
 - testing. each code section (seperated by a comment header) must have `#theorem` and `#guard` statements that verify and test its behavior.
