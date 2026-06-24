@@ -4,26 +4,6 @@ namespace Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-Size-invariant proof helpers
-
-`#guard` pins output sizes at fixed inputs. The `_size` theorems below prove them
-for every input: the invariant the flat-buffer `i * cols + j` indexing relies on.
-`foldl_size_pres`: a `List.foldl` whose step preserves `.size` preserves it overall.
-`replicate_loop2_size`: a double `Id.run` loop that only `setIfInBounds` into a
-`replicate` keeps that buffer's size.
-===--------------------------------------------------------------------------===
--/
-
-theorem foldl_size_pres {α : Type} {K : Type} (l : List α) (init : Array K) (f : Array K → α → Array K) (hf : ∀ b a, (f b a).size = b.size) : (l.foldl f init).size = init.size := by
-  induction l generalizing init with
-  | nil => rfl
-  | cons x xs ih => rw [List.foldl_cons, ih, hf]
-
-theorem replicate_loop2_size {α : Type} {β : Type} {K : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : K) (g : Array K → α → β → Nat) (h : Array K → α → β → K) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n :=
-  (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
-
-/-!
-===--------------------------------------------------------------------------===
 Matmul
 ===--------------------------------------------------------------------------===
 -/
@@ -31,8 +11,7 @@ Matmul
 def transposeFlat {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : Array K :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
--- scalar accumulation, same pattern as `matmulBwdX`/`matmulBwdW`. parity with the Python reference holds at atol 1e-11 here, so no FMA-blocking product materialization is needed.
--- output cell `idx = i*m+j` (i = idx/m, j = idx%m) is the left-fold `∑ kk, x[i*k+kk] * W[kk*m+j]`. the left-fold order is the `Float` accumulation order, so this is bit-identical to the imperative loop and `matmulFwd_bridge` lifts it to `Matrix.mul` over a `CommRing`.
+-- left-fold matches the loop's accumulation order; `matmulFwd_bridge` lifts it to `Matrix.mul`.
 def matmulFwd {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : Array K :=
   (Array.range (n * m)).map fun idx => (Array.range k).foldl (fun s kk => s + x[(idx / m) * k + kk]! * W[kk * m + (idx % m)]!) (0 : K)
 
@@ -47,11 +26,11 @@ theorem matmulFwd_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Ar
 theorem matmulBwdX_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX]
 theorem matmulBwdW_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW]
 
--- reading index `k` of a `(Array.range n).map f` buffer is `f k` when `k` is in range. the `i * cols + j` flat indexing relies on this, and `x[...]!` hides it behind a `getD default`, so pin it once.
+-- `(Array.range n).map f` at `k < n` is `f k`; unfolds the `getElem!` default.
 theorem map_range_getElem! {K : Type} [Inhabited K] (f : Nat → K) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by
   rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
 
--- defining property of transpose: output cell `(row j, col i)` holds input cell `(row i, col j)`. certifies the index permutation is exactly the matrix transpose, with no off-by-one in the `i * c + j` encode/decode.
+-- output `(j, i)` = input `(i, j)`.
 theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : Nat) (hi : i < r) (hj : j < c) : (transposeFlat x r c)[j * r + i]! = x[i * c + j]! := by
   have hr : 0 < r := Nat.lt_of_le_of_lt (Nat.zero_le i) hi
   have hbound : j * r + i < c * r := by
@@ -62,7 +41,7 @@ theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : N
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (j * r + i) % r = i by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hi], show (j * r + i) / r = j by rw [Nat.mul_comm j r, Nat.mul_add_div hr, Nat.div_eq_of_lt hi, Nat.add_zero]]
 
--- transpose is its own inverse for any input of the matching shape (back-transpose uses swapped dims `c r`). certifies the rearrangement is a true permutation: no cell dropped or duplicated, for every `r`, `c`, and buffer.
+-- transpose is its own inverse (back-transpose swaps dims to `c r`).
 theorem transposeFlat_involution (x : Array Float) (r : Nat) (c : Nat) (h : x.size = r * c) : transposeFlat (transposeFlat x r c) c r = x := by
   apply Array.ext
   · simp [transposeFlat, h]
@@ -112,7 +91,7 @@ Softmax
 ===--------------------------------------------------------------------------===
 -/
 
--- `e * (1/s)` (not `e / s`) mirrors Python's `Value.__truediv__` for bit-exact parity.
+-- `e * (1/s)` not `e / s`: matches Python `__truediv__`.
 def softmaxFlat (v : Array Float) : Array Float :=
   if v.size = 0 then v
   else
@@ -140,6 +119,15 @@ def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Ar
         let g := scale * aw[i * cols + j]! * (daw[i * cols + j]! - dot)
         out := out.set! (i * cols + j) g
     return out
+
+-- shared `replicate`/`foldl`/`setIfInBounds` size plumbing: every nested-loop `_size` proof below discharges through `replicate_loop2_size`.
+theorem foldl_size_pres {α : Type} {K : Type} (l : List α) (init : Array K) (f : Array K → α → Array K) (hf : ∀ b a, (f b a).size = b.size) : (l.foldl f init).size = init.size := by
+  induction l generalizing init with
+  | nil => rfl
+  | cons x xs ih => rw [List.foldl_cons, ih, hf]
+
+theorem replicate_loop2_size {α : Type} {β : Type} {K : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : K) (g : Array K → α → β → Nat) (h : Array K → α → β → K) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n :=
+  (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
 
 theorem softmaxFlat_size (v : Array Float) : (softmaxFlat v).size = v.size := by unfold softmaxFlat; split <;> simp
 theorem softmaxRows_size (x : Array Float) (rows : Nat) (cols : Nat) : (softmaxRows x rows cols).size = rows * cols := by simp [softmaxRows, Id.run]; exact replicate_loop2_size ..
@@ -191,8 +179,7 @@ Embedding scatter
 ===--------------------------------------------------------------------------===
 -/
 
--- data is flat row-major, so decode output index `k` to 2D via `/ cols` and `% cols`,
--- then re-encode the source cell as `srcRow * cols + col`. duplicate ids are fine
+-- decode `k` to `(k/cols, k%cols)`, re-encode source as `srcRow*cols+col`. dup ids fine.
 def gatherFlat {K : Type} [Inhabited K] (table : Array K) (cols : Nat) (ids : Array Nat) : Array K :=
   (Array.range (ids.size * cols)).map fun k => table[ids[k / cols]! * cols + k % cols]!
 
@@ -208,11 +195,11 @@ def scatterAddFlat {K : Type} [Add K] [Zero K] [Inhabited K] (rows : Nat) (cols 
 theorem gatherFlat_size (table : Array Float) (cols : Nat) (ids : Array Nat) : (gatherFlat table cols ids).size = ids.size * cols := by simp [gatherFlat]
 theorem scatterAddFlat_size (rows : Nat) (cols : Nat) (grad : Array Float) (ids : Array Nat) : (scatterAddFlat rows cols grad ids).size = rows * cols := by simp [scatterAddFlat, Id.run]; exact replicate_loop2_size ..
 
--- reading index `i` of `Array.range n` is `i` when in range. `gatherFlat` decodes ids through `ids[...]!`, so this lets the identity-lookup proof escape `getD default`.
+-- `(Array.range n)[i] = i` for `i < n`.
 theorem nat_range_getElem! (n : Nat) (i : Nat) (hi : i < n) : (Array.range n)[i]! = i := by
   rw [getElem!_pos _ i (by simp [hi]), Array.getElem_range]
 
--- general gather characterization: output cell `(row, col)` reads source cell `(ids[row], col)`. certifies the `/ cols` and `% cols` decode plus the `ids[row] * cols + col` re-encode for every id array and shape, not only identity ids.
+-- output `(row, col)` = source `(ids[row], col)`.
 theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row : Nat) (col : Nat) (hrow : row < ids.size) (hcol : col < cols) : (gatherFlat table cols ids)[row * cols + col]! = table[ids[row]! * cols + col]! := by
   have hbound : row * cols + col < ids.size * cols := by
     have h2 : row * cols + cols = (row + 1) * cols := by rw [Nat.add_mul, Nat.one_mul]
@@ -222,7 +209,7 @@ theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (row * cols + col) % cols = col by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hcol], show (row * cols + col) / cols = row by rw [Nat.mul_comm row cols, Nat.mul_add_div (Nat.lt_of_le_of_lt (Nat.zero_le col) hcol), Nat.div_eq_of_lt hcol, Nat.add_zero]]
 
--- gathering rows `[0, 1, ..., rows-1]` reproduces the table byte-for-byte for every shape. corollary of `gatherFlat_get` at identity ids: the decode `(k/cols, k%cols)` round-trips to `k` exactly.
+-- identity ids reproduce the table; corollary of `gatherFlat_get`.
 theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h : table.size = rows * cols) : gatherFlat table cols (Array.range rows) = table := by
   apply Array.ext
   · simp [gatherFlat, h]
@@ -247,7 +234,7 @@ Cross-entropy
 ===--------------------------------------------------------------------------===
 -/
 
--- `(1/n) * sum(losses)` order (reciprocal first) mirrors Python for bit-exact parity.
+-- reciprocal-first `(1/n) * sum(losses)` matches Python.
 def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat) (mask : Array Float) (sumMask : Float) : Float :=
   let total := (Array.range rows).foldl (init := 0.0) fun acc i =>
     let p := probs[i * cols + targetIds[i]!]!
@@ -283,7 +270,7 @@ RMS norm
 ===--------------------------------------------------------------------------===
 -/
 
--- `ms`/`scale`/`y` order matches Python's `Value.__truediv__/__pow__/__mul__` for bit-exact parity. Cache stores `scale = 1/√(ms+ε)`, backward reconstructs from there.
+-- `ms`/`scale`/`y` order matches Python; cache stores `scale = 1/√(ms+ε)`.
 def rmsnormFwd (x : Array Float) (rows cols : Nat) (eps : Float) : Array Float × Array Float :=
   let invD : Float := 1.0 / cols.toFloat
   let scales : Array Float := (Array.range rows).map fun i =>
@@ -432,7 +419,7 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
        let z : Array Float := Array.replicate 16 0.0
        let (out, _) := attnFwd cfg x 2 z z z z
        arrApproxEq out x
--- with zero weights the only surviving gradient path is the residual: `dxPre = dout`, weight grads are zero-sized-correct
+-- zero weights leave only the residual path: `dxPre = dout`, weight grads zero-sized
 #guard let cfg : AttnConfig := { nEmbed := 4, nHead := 2 }
        let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0

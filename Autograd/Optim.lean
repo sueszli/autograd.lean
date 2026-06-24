@@ -34,9 +34,7 @@ theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by sim
 #guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]  -- existing id overwritten in place
 #guard let a := upsert #[(5, #[1, 2])] 6 #[3, 3]; a.size == 2 && arrApproxEq (lookup a 6 #[]) #[3, 3]  -- new id appended
 
--- `find?` is blind to a localized edit at a slot the predicate already rejects: equal size, and at
--- every index either the elements agree or both fail `p`. workhorse for the no-aliasing proof, where
--- overwriting one parameter's slot leaves a foreign key's slot byte-identical.
+-- `find? p` is unchanged by edits at slots `p` rejects (same size, each index agrees or both fail `p`).
 theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
   cases hx : xs.find? p with
   | none =>
@@ -68,8 +66,7 @@ theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (
       · rw [← he]; exact this
       · simp [hpyk]
 
--- the optimizer reads back exactly the moment buffer it just wrote, for ANY prior state `a` (fresh
--- key appended or existing key overwritten in place).
+-- a lookup reads back exactly the buffer just upserted, for any prior state `a`.
 theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (fallback : Array Float) : lookup (upsert a id x) id fallback = x := by
   unfold lookup upsert
   cases hf : a.findIdx? (fun (i, _) => i = id) with
@@ -96,8 +93,7 @@ theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Arra
       grind
     rw [hset]
 
--- updating one parameter's Adam state can NEVER corrupt or shadow another's: a lookup of a different
--- key `j` returns exactly what it would before the `upsert`, for any prior state `a`.
+-- an `upsert` at `id` leaves a lookup of a different key `j` unchanged (no aliasing).
 theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat) (x : Array Float) (fallback : Array Float) (hne : id ≠ j) : lookup (upsert a id x) j fallback = lookup a j fallback := by
   unfold lookup
   have key : (upsert a id x).find? (fun (i, _) => i = j) = a.find? (fun (i, _) => i = j) := by
@@ -186,8 +182,7 @@ theorem adamWBuf_param_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : A
 theorem adamWBuf_m_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
 theorem adamWBuf_v_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
 
--- first step from zero moments: `m = (1-β1)g`, `v = (1-β2)g²`, and bias correction makes the
--- update size `lr·g/(|g|+ε) ≈ lr` for `g > 0`
+-- first step from zero moments: `m = (1-β1)g`, `v = (1-β2)g²`, update `≈ lr` for `g > 0`.
 #guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
 -- a zero gradient is a no-op: params and both moments stay put
 #guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]

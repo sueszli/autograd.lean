@@ -110,8 +110,7 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
 theorem add_requiresGrad (a : Tensor) (b : Tensor) : (a + b).requiresGrad = (a.requiresGrad || b.requiresGrad) := rfl
 theorem add_shape (a : Tensor) (b : Tensor) : (a + b).shape = a.shape := rfl
 
--- add's backward: the vjp of `(A,B) ↦ A + B` splits the cotangent unchanged to each input, matching `addOp`
--- passing `incoming` to both `a` and `b`. Stated as the additivity `⟪G, A+B⟫ = ⟪G,A⟫ + ⟪G,B⟫`.
+-- add backward: cotangent splits unchanged to both inputs, `⟪G, A+B⟫ = ⟪G,A⟫ + ⟪G,B⟫`.
 theorem add_adjoint {n : Nat} {m : Nat} (A : Matrix (Fin n) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * (A + B)) = Matrix.trace (Gᵀ * A) + Matrix.trace (Gᵀ * B) := by rw [Matrix.mul_add, Matrix.trace_add]
 theorem matmul_requiresGrad (x : Tensor) (w : Tensor) : (x @ w).requiresGrad = (x.requiresGrad || w.requiresGrad) := rfl
 theorem matmul_shape (x : Tensor) (w : Tensor) : (x @ w).shape = #[x.rows, w.cols] := rfl
@@ -129,9 +128,7 @@ theorem transposeFlat_adjoint {n : Nat} {m : Nat} (X : Matrix (Fin m) (Fin n) �
   rw [Matrix.transpose_transpose, ← Matrix.transpose_mul, Matrix.trace_transpose, Matrix.trace_mul_comm]
 theorem gather_requiresGrad (table : Tensor) (ids : Array Nat) : (table.gather ids).requiresGrad = table.requiresGrad := rfl
 
--- gather's backward is scatter-add. gather picks rows, so it is left-multiplication by the 0/1 selection matrix
--- `S r j = [ids[r] = j]`. Hence its adjoint `G ↦ Sᵀ * G` is the matmul adjoint at `S` (`gather_adjoint`), and
--- `Sᵀ * G` accumulates each grad row into its source row (`scatter_apply`), which is exactly `scatterAddFlat`.
+-- gather is left-mul by the 0/1 selection `S r j = [ids[r] = j]`, so its adjoint `G ↦ Sᵀ * G` is `scatterAddFlat`.
 def selection {rows : Nat} (ids : Array Nat) : Matrix (Fin ids.size) (Fin rows) ℝ := Matrix.of fun r j => if ids[r.1]'r.2 = (j : Nat) then 1 else 0
 
 theorem gather_adjoint {rows : Nat} {cols : Nat} (ids : Array Nat) (table : Matrix (Fin rows) (Fin cols) ℝ) (G : Matrix (Fin ids.size) (Fin cols) ℝ) : Matrix.trace (Gᵀ * (selection (rows := rows) ids * table)) = Matrix.trace (((selection (rows := rows) ids)ᵀ * G)ᵀ * table) := matmulBwdW_adjoint (selection (rows := rows) ids) table G
@@ -139,22 +136,13 @@ theorem gather_adjoint {rows : Nat} {cols : Nat} (ids : Array Nat) (table : Matr
 theorem scatter_apply {rows : Nat} {cols : Nat} (ids : Array Nat) (G : Matrix (Fin ids.size) (Fin cols) ℝ) (j : Fin rows) (c : Fin cols) : ((selection (rows := rows) ids)ᵀ * G) j c = ∑ r : Fin ids.size, (if ids[r.1]'r.2 = (j : Nat) then G r c else 0) := by
   simp [selection, Matrix.mul_apply, Matrix.transpose_apply, Matrix.of_apply]
 
--- keystone: the whole backward pass of a linear layer is the gradient, by chain rule. forward is the two-op
--- composition `readout ∘ add ∘ matmul`: `ℓ(W,B) = ⟪T, X*W + B⟫` (matmul `X*W`, bias `add`, linear readout
--- against target `T`). reverse-mode seeds the loss cotangent `T` and walks it exactly as `backwardAcc` does for
--- `.addOp` then `.matmulOp`: `add_adjoint` splits `T` unchanged to both summands, then `matmulBwdW_adjoint`
--- left-multiplies by `Xᵀ`. the adjoint of the composition is the composition of adjoints in reverse, the chain
--- rule. it yields `dW = Xᵀ*T`, `dB = T`, and for a map linear in its parameters the identity `ℓ = ⟪dW,W⟫ + ⟪dB,B⟫`
--- pins those down as the gradients (a function linear in `θ` equals `⟪∇,θ⟫`).
+-- linear layer `ℓ(W,B) = ⟪T, X*W + B⟫`: chain `add_adjoint` then `matmulBwdW_adjoint` gives `dW = Xᵀ*T`, `dB = T`.
 theorem linearLayer_grad {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (T : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Tᵀ * (X * W + B)) = Matrix.trace ((Xᵀ * T)ᵀ * W) + Matrix.trace (Tᵀ * B) := by
   rw [add_adjoint, matmulBwdW_adjoint]
 
--- bridge: read a flat row-major buffer as a Mathlib `Matrix`, then prove each running kernel equals the
--- corresponding `Matrix` op over a `CommRing`. this connects the adjoint lemmas above to the code that runs.
--- `foldl_range_sum` is the linchpin: the kernels accumulate with a left `foldl` (the `Float` order), which
--- over a `CommRing` equals `Finset.sum`, the order-free sum `Matrix.mul` uses.
 def toMat {K : Type} [Inhabited K] (a : Array K) (rows : Nat) (cols : Nat) : Matrix (Fin rows) (Fin cols) K := Matrix.of fun i j => a[i.1 * cols + j.1]!
 
+-- left `foldl` (the Float accumulation order) equals `Finset.sum` over a `CommRing`.
 theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K) : (Array.range n).foldl (fun s i => s + f i) 0 = ∑ i ∈ Finset.range n, f i := by
   induction n with
   | zero => rfl
@@ -162,7 +150,6 @@ theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K) :
 
 theorem idx_bound (a : Nat) (b : Nat) (p : Nat) (q : Nat) (ha : a < p) (hb : b < q) : a * q + b < p * q := by nlinarith
 
--- the running forward kernel `matmulFwd` reads as `Matrix.mul`. with the adjoint lemmas above, this is what makes "the matmul the engine runs is the verified one" true rather than a parallel claim.
 theorem matmulFwd_bridge {K : Type} [CommRing K] [Inhabited K] (x : Array K) (W : Array K) (n : Nat) (k : Nat) (m : Nat) : toMat (matmulFwd x n k W m) n m = toMat x n k * toMat W k m := by
   ext i j
   rw [Matrix.mul_apply]
@@ -174,7 +161,6 @@ theorem matmulFwd_bridge {K : Type} [CommRing K] [Inhabited K] (x : Array K) (W 
   simp only [hdiv, hmod]
   rw [foldl_range_sum, Fin.sum_univ_eq_sum_range (fun p => x[i.1 * k + p]! * W[p * m + j.1]!) k]
 
--- `matmulBwdX`'s running rule reads as `dout * Wᵀ`, the adjoint of `X ↦ X * W` in the X argument.
 theorem matmulBwdX_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K) (W : Array K) (n : Nat) (m : Nat) (k : Nat) : toMat (matmulBwdX dout n m W k) n k = toMat dout n m * (toMat W k m)ᵀ := by
   ext i kk
   rw [Matrix.mul_apply]
@@ -186,7 +172,6 @@ theorem matmulBwdX_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K)
   simp only [hdiv, hmod]
   rw [foldl_range_sum, Fin.sum_univ_eq_sum_range (fun p => dout[i.1 * m + p]! * W[kk.1 * m + p]!) m]
 
--- `matmulBwdW`'s running rule reads as `Xᵀ * dout`, the adjoint of `W ↦ X * W` in the W argument.
 theorem matmulBwdW_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K) (x : Array K) (n : Nat) (m : Nat) (k : Nat) : toMat (matmulBwdW dout n m x k) k m = (toMat x n k)ᵀ * toMat dout n m := by
   ext kk j
   rw [Matrix.mul_apply]
@@ -198,16 +183,13 @@ theorem matmulBwdW_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K)
   simp only [hdiv, hmod]
   rw [foldl_range_sum, Fin.sum_univ_eq_sum_range (fun p => x[p * k + kk.1]! * dout[p * m + j.1]!) n]
 
--- the running `maddFlat` reads as `Matrix` addition, the adjoint split of `add`'s backward.
 theorem maddFlat_bridge {K : Type} [CommRing K] [Inhabited K] (a : Array K) (b : Array K) (rows : Nat) (cols : Nat) (ha : a.size = rows * cols) : toMat (maddFlat a b) rows cols = toMat a rows cols + toMat b rows cols := by
   ext i j
   simp only [toMat, Matrix.of_apply, Matrix.add_apply]
   have hb : i.1 * cols + j.1 < a.size := by rw [ha]; exact idx_bound i.1 j.1 rows cols i.2 j.2
   rw [maddFlat, map_range_getElem! _ _ _ hb]
 
--- the payoff: the adjoint identities, now stated over the running kernels (the pairing `trace (Aᵀ * B)` is the ℝ Frobenius inner product, so
--- these specialize the generic bridges to `K := ℝ`). `matmulBwdW` is the W-gradient, `matmulBwdX` the X-gradient,
--- `maddFlat`'s backward splits the cotangent. these are the gradients of the matmul/add the engine actually runs.
+-- adjoint identities over ℝ kernels (`trace (Aᵀ * B)` is the Frobenius inner product): the matmul/add gradients.
 theorem matmulBwdW_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ) (n : Nat) (k : Nat) (m : Nat) : Matrix.trace ((toMat gArr n m)ᵀ * toMat (matmulFwd x n k W m) n m) = Matrix.trace ((toMat (matmulBwdW gArr n m x k) k m)ᵀ * toMat W k m) := by
   rw [matmulFwd_bridge, matmulBwdW_bridge, matmulBwdW_adjoint]
 
@@ -217,9 +199,7 @@ theorem matmulBwdX_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ
 theorem maddFlat_kernel_grad (a : Array ℝ) (b : Array ℝ) (gArr : Array ℝ) (rows : Nat) (cols : Nat) (ha : a.size = rows * cols) : Matrix.trace ((toMat gArr rows cols)ᵀ * toMat (maddFlat a b) rows cols) = Matrix.trace ((toMat gArr rows cols)ᵀ * toMat a rows cols) + Matrix.trace ((toMat gArr rows cols)ᵀ * toMat b rows cols) := by
   rw [maddFlat_bridge a b rows cols ha, add_adjoint]
 
--- exact ℚ execution: the same generic kernels the bridges prove correct, run on concrete rationals with exact `==`
--- and no tolerance. the proven formula and the computed value coincide bit-for-bit (contrast the `arrApproxEq` Float
--- `#guard`s in `Ops.lean`). this is the running-code-is-verified surface for the linear ops.
+-- the proven kernels run on exact ℚ: computed value equals the proven formula under `==`, no float tolerance.
 #guard matmulFwd (#[1, 2, 3, 4] : Array ℚ) 2 2 #[1, 2, 3, 4] 2 == #[7, 10, 15, 22]
 #guard matmulFwd (#[1, 2, 3, 4, 5, 6] : Array ℚ) 2 3 #[1, 2, 3, 4, 5, 6] 2 == #[22, 28, 49, 64]
 #guard maddFlat (#[1, 2, 3] : Array ℚ) #[3, 4, 5] == #[4, 6, 8]
@@ -228,10 +208,8 @@ theorem maddFlat_kernel_grad (a : Array ℝ) (b : Array ℝ) (gArr : Array ℝ) 
 #guard gatherFlat (#[10, 11, 20, 21, 30, 31] : Array ℚ) 2 #[2, 0] == #[30, 31, 10, 11]
 #guard transposeFlat (#[1, 2, 3, 4, 5, 6] : Array ℚ) 2 3 == #[1, 4, 2, 5, 3, 6]
 
--- nonlinear correctness over ℝ. for a nonlinear op an adjoint identity is not the gradient, so here the backward
--- rule is shown to equal the actual real derivative (Mathlib calculus). `softmaxFlat`/`maskedCrossEntropy` run
--- `exp`/`log`; this proves the foundation of their gradient: the partial derivative of log-sum-exp is softmax, so
--- the softmax-cross-entropy gradient is `probs - onehot`. linked to the Float kernels by inspection.
+-- nonlinear ops: prove the backward rule equals the real derivative (Mathlib calculus), since the adjoint
+-- identity is not the gradient here. foundation: `∂ lse / ∂z_i = softmax_i`.
 noncomputable def lse {c : Nat} (z : Fin c → ℝ) : ℝ := Real.log (∑ j, Real.exp (z j))
 noncomputable def softmaxReal {c : Nat} (z : Fin c → ℝ) (i : Fin c) : ℝ := Real.exp (z i) / ∑ j, Real.exp (z j)
 
@@ -249,8 +227,6 @@ theorem exp_sum_partial {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt (
     have e : (fun t : ℝ => Real.exp (Function.update z i t j)) = fun _ => Real.exp (z j) := by funext t; rw [Function.update_of_ne hj]
     rw [e]; exact hasDerivAt_const (z i) (Real.exp (z j))
 
--- the partial derivative of `lse` in coordinate `i` is exactly `softmaxReal z i`. this is the gradient of log-sum-exp,
--- and the softmax-cross-entropy loss gradient `probs - onehot` follows from it.
 theorem lse_partial_deriv {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt (fun t => lse (Function.update z i t)) (softmaxReal z i) (z i) := by
   have hpos : (0 : ℝ) < ∑ j, Real.exp (z j) := Finset.sum_pos (fun j _ => Real.exp_pos _) ⟨i, Finset.mem_univ i⟩
   have hne : (fun t => ∑ j, Real.exp (Function.update z i t j)) (z i) ≠ 0 := by simp only [Function.update_eq_self]; exact ne_of_gt hpos
@@ -258,9 +234,7 @@ theorem lse_partial_deriv {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt
   simp only [Function.update_eq_self] at hlog
   exact hlog
 
--- softmax-cross-entropy loss for target `t`: `-log (softmax z t) = lse z - z t`. its partial derivative in
--- coordinate `i` is `softmaxReal z i - [i = t]`, i.e. the gradient is `probs - onehot`, exactly what
--- `maskedCrossEntropyBwd` computes. this is the real derivative, the strong correctness form for the loss.
+-- CE loss `-log (softmax z t) = lse z - z t`, with `∂/∂z_i = softmaxReal z i - [i = t]` (i.e. `probs - onehot`).
 noncomputable def ceLoss {c : Nat} (z : Fin c → ℝ) (t : Fin c) : ℝ := lse z - z t
 
 theorem ce_partial_deriv {c : Nat} (z : Fin c → ℝ) (t : Fin c) (i : Fin c) : HasDerivAt (fun s => ceLoss (Function.update z i s) t) (softmaxReal z i - (if i = t then 1 else 0)) (z i) := by
@@ -272,11 +246,8 @@ theorem ce_partial_deriv {c : Nat} (z : Fin c → ℝ) (t : Fin c) (i : Fin c) :
       rw [e]; exact hasDerivAt_const (z i) (z t)
   exact (lse_partial_deriv z i).sub hupd
 
--- keystone: backprop through one linear pre-activation into the loss, by the chain rule. logit `i` is the affine
--- map `w ↦ a*w + b` of a parameter `w` (the matmul row `a = xᵀ`), then the softmax-CE loss. composing
--- `ce_partial_deriv` (the loss gradient) with that affine map via `HasDerivAt.comp` gives `d loss / dw =
--- (softmax_i - [i=t]) * a`: the cotangent `probs - onehot` routed back through the layer by `Xᵀ`, exactly what
--- `maskedCrossEntropyBwd` then `matmulBwdW` compute. the full-network keystone is this composition iterated.
+-- logit `i` is the affine map `w ↦ a*w + b` (row `a = xᵀ`), then CE loss. chaining via `HasDerivAt.comp`
+-- gives `d loss / dw = (softmax_i - [i=t]) * a`: the cotangent `probs - onehot` routed back by `Xᵀ`.
 theorem layer_ce_chain {c : Nat} (zbase : Fin c → ℝ) (t : Fin c) (i : Fin c) (a : ℝ) (b : ℝ) (w : ℝ) : HasDerivAt (fun w => ceLoss (Function.update zbase i (a * w + b)) t) ((softmaxReal (Function.update zbase i (a * w + b)) i - (if i = t then 1 else 0)) * a) w := by
   have hg : HasDerivAt (fun s => ceLoss (Function.update zbase i s) t) (softmaxReal (Function.update zbase i (a * w + b)) i - (if i = t then 1 else 0)) (a * w + b) := by
     simpa [Function.update_idem, Function.update_self] using ce_partial_deriv (Function.update zbase i (a * w + b)) t i
@@ -385,12 +356,12 @@ def backward (loss : Tensor) : Array (Nat × Array Float) :=
 theorem gradientMapAdd_fresh (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (h : gm.findIdx? (fun (i, _) => i = id) = none) : gradientMapAdd gm id g = gm.push (id, g) := by
   unfold gradientMapAdd; rw [h]
 
--- shared-leaf accumulation: two adds for the same `id` collapse to ONE entry whose value is `maddFlat g g'`, the defining property of reverse-mode autograd.
+-- shared leaf: two adds for the same `id` collapse to one entry `maddFlat g g'`.
 theorem gradientMapAdd_shared (id : Nat) (g : Array Float) (g' : Array Float) : gradientMapAdd (gradientMapAdd #[] id g) id g' = #[(id, maddFlat g g')] := by
   have h0 : gradientMapAdd #[] id g = #[(id, g)] := by unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
   rw [h0]; unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
 
--- retrievability: after recording `id`, an entry for it always exists, so the optimizer's lookup can never miss it. covers both `set!` and `push` branches.
+-- after recording `id`, an entry for it always exists (both `set!` and `push` branches).
 theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : ∃ p ∈ (gradientMapAdd gm id g), p.1 = id := by
   unfold gradientMapAdd
   split
@@ -399,7 +370,7 @@ theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Arr
     exact ⟨(id, maddFlat gm[i]!.2 g), by rw [Array.set!_eq_setIfInBounds]; exact Array.mem_setIfInBounds hi, rfl⟩
   case h_2 h => exact ⟨(id, g), by simp, rfl⟩
 
--- no-clobber: adding one leaf's gradient never drops any other leaf already in the map, so after a full backward pass every parameter that got a gradient still has it.
+-- adding one leaf's gradient never drops another id already in the map.
 theorem gradientMapAdd_pres_ids (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ gm, p.1 = j) : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j := by
   obtain ⟨p, hp, hpj⟩ := hj
   rw [Array.mem_iff_getElem] at hp
@@ -420,7 +391,7 @@ theorem gradientMapAdd_pres_ids (gm : Array (Nat × Array Float)) (id : Nat) (g 
       refine ⟨p, Array.mem_iff_getElem.mpr ⟨k, hsize, ?_⟩, hpj⟩
       rw [Array.getElem_setIfInBounds_ne hk hik, hkp]
 
--- converse of `pres_ids`: every id present after an add was either `id` or already there, so accumulation invents no spurious ids. with `mem` + `pres_ids` this pins the id-set to exactly `old ∪ {id}`.
+-- converse of `pres_ids`: every id after an add is `id` or was already present (no spurious ids).
 theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j) : j = id ∨ ∃ p ∈ gm, p.1 = j := by
   obtain ⟨p, hp, hpj⟩ := hj
   unfold gradientMapAdd at hp
@@ -442,8 +413,7 @@ theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (
     · rw [Array.getElem_setIfInBounds_ne hk hik] at hkp
       exact Or.inr ⟨p, Array.mem_iff_getElem.mpr ⟨k, hk, hkp⟩, hpj⟩
 
--- the shared-leaf example from the section doc: `a` (id 0) is reached twice in `a + b + a`,
--- so its gradient accumulates to `[2,2]` while `b` (id 1) stays at `[1,1]`
+-- `a + b + a`: id 0 reached twice accumulates to `[2,2]`, id 1 stays `[1,1]`.
 #guard
   let gm := (Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 true + Tensor.leaf #[1, 2] 1 2 0 true).backwardAcc #[1, 1] #[]
   let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
