@@ -144,39 +144,34 @@ AdamW
 
 -- `beta1`, `beta2` and `lr0` (in the model's Config) plus init `σ` were grid-searched for bit-exact parity with the Python reference.
 
-structure AdamWConfig where
-  beta1 : Float := 0.85
-  beta2 : Float := 0.99
-  deriving Inhabited
-
-private def adamWBuf (cfg : AdamWConfig) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
+private def adamWBuf (beta1 beta2 : Float) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
-  let invBias1 := 1.0 / (1.0 - Float.pow cfg.beta1 t)
-  let invBias2 := 1.0 / (1.0 - Float.pow cfg.beta2 t)
+  let invBias1 := 1.0 / (1.0 - Float.pow beta1 t)
+  let invBias2 := 1.0 / (1.0 - Float.pow beta2 t)
   let lrScaled := lr * invBias1
-  let oneMinusB1 := 1.0 - cfg.beta1
-  let oneMinusB2 := 1.0 - cfg.beta2
+  let oneMinusB1 := 1.0 - beta1
+  let oneMinusB2 := 1.0 - beta2
   let eps : Float := 1e-8
   let n := p.size
-  let nm : Array Float := (Array.range n).map fun i => cfg.beta1 * m[i]! + oneMinusB1 * g[i]!
-  let nv : Array Float := (Array.range n).map fun i => cfg.beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
+  let nm : Array Float := (Array.range n).map fun i => beta1 * m[i]! + oneMinusB1 * g[i]!
+  let nv : Array Float := (Array.range n).map fun i => beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
   let np : Array Float := (Array.range n).map fun i => p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
-def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
+def stepOne (beta1 beta2 : Float) (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (s : OptState) : Tensor × OptState :=
   let z := zerosLike t
   let g := lookup gradientMap t.id z
   let m := lookup s.m t.id z
   let v := lookup s.v t.id z
-  let (p', m', v') := adamWBuf cfg step lr t.data g m v
+  let (p', m', v') := adamWBuf beta1 beta2 step lr t.data g m v
   ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
 
 -- tests
-theorem adamWBuf_param_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).1.size = p.size := by simp [adamWBuf]
-theorem adamWBuf_m_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
-theorem adamWBuf_v_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
-#guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
-#guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
-#guard let (t', _) := stepOne {} 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] (default : OptState); arrApproxEq t'.data #[5.0, -3.0]
+theorem adamWBuf_param_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_m_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_v_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
+#guard let (np, nm, nv) := adamWBuf 0.85 0.99 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
+#guard let (np, nm, nv) := adamWBuf 0.85 0.99 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
+#guard let (t', _) := stepOne 0.85 0.99 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] (default : OptState); arrApproxEq t'.data #[5.0, -3.0]
 
 end Autograd

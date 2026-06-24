@@ -44,8 +44,8 @@ inductive GradFn where
   | gatherOp  (table : Tensor) (ids : Array Nat)
   | rmsnormOp (a : Tensor) (rms : Array Float)
   | lossOp    (logits : Tensor) (probs : Array Float) (targets : Array Nat) (mask : Array Float) (sumMask : Float)
-  | attnOp    (xPre wq wk wv wo : Tensor) (cache : AttnCache) (cfg : AttnConfig)
-  | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache) (cfg : MlpConfig)
+  | attnOp    (xPre wq wk wv wo : Tensor) (cache : AttnCache) (nEmbed nHead : Nat)
+  | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache)
 end
 
 instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
@@ -91,13 +91,13 @@ def rmsnorm (a : Tensor) (eps : Float) : Tensor :=
   let (y, rms) := rmsnormFwd a.data a.rows a.cols eps
   { data := y, shape := a.shape, id := 0, requiresGrad := a.requiresGrad, gradFn := .rmsnormOp a rms }
 
-def attn (cfg : AttnConfig) (xPre wq wk wv wo : Tensor) : Tensor :=
-  let (out, cache) := attnFwd cfg xPre.data xPre.rows wq.data wk.data wv.data wo.data
-  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || wq.requiresGrad || wk.requiresGrad || wv.requiresGrad || wo.requiresGrad, gradFn := .attnOp xPre wq wk wv wo cache cfg }
+def attn (nEmbed nHead : Nat) (epsilon maskValue : Float) (xPre wq wk wv wo : Tensor) : Tensor :=
+  let (out, cache) := attnFwd nEmbed nHead epsilon maskValue xPre.data xPre.rows wq.data wk.data wv.data wo.data
+  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || wq.requiresGrad || wk.requiresGrad || wv.requiresGrad || wo.requiresGrad, gradFn := .attnOp xPre wq wk wv wo cache nEmbed nHead }
 
-def mlp (cfg : MlpConfig) (xPre fc1 fc2 : Tensor) : Tensor :=
-  let (out, cache) := mlpFwd cfg xPre.data xPre.rows fc1.data fc2.data
-  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache cfg }
+def mlp (nEmbed : Nat) (epsilon : Float) (xPre fc1 fc2 : Tensor) : Tensor :=
+  let (out, cache) := mlpFwd nEmbed epsilon xPre.data xPre.rows fc1.data fc2.data
+  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache }
 
 def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=
   let probs := softmaxRows logits.data logits.rows logits.cols
@@ -314,14 +314,14 @@ partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Arr
     let dLogits := maskedCrossEntropyBwd probs logits.rows logits.cols targets mask sumMask
     let scaled := dLogits.map (scale * ·)
     logits.backwardAcc scaled gradientMap
-  | .attnOp xPre wq wk wv wo cache cfg =>
-    let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd cfg incoming xPre.rows wq.data wk.data wv.data wo.data cache
+  | .attnOp xPre wq wk wv wo cache nEmbed nHead =>
+    let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd nEmbed nHead incoming xPre.rows wq.data wk.data wv.data wo.data cache
     let gradientMap := xPre.backwardAcc dxPre gradientMap
     let gradientMap := wq.backwardAcc dWq gradientMap
     let gradientMap := wk.backwardAcc dWk gradientMap
     let gradientMap := wv.backwardAcc dWv gradientMap
     wo.backwardAcc dWo gradientMap
-  | .mlpOp xPre fc1 fc2 cache _ =>
+  | .mlpOp xPre fc1 fc2 cache =>
     let (dxPre, (df1, df2)) := mlpBwd incoming fc1.data fc2.data cache
     let gradientMap := xPre.backwardAcc dxPre gradientMap
     let gradientMap := fc1.backwardAcc df1 gradientMap

@@ -25,20 +25,7 @@ structure Config where
   maskValue : Float := -1.0e9
   deriving Inhabited
 
-private def Config.toAttnConfig (c : Config) : AttnConfig :=
-  { nEmbed := c.nEmbed, nHead := c.nHead, epsilon := c.epsilon, maskValue := c.maskValue }
-
-private def Config.toMlpConfig (c : Config) : MlpConfig :=
-  { nEmbed := c.nEmbed, epsilon := c.epsilon }
-
-def Config.toAdamWConfig (c : Config) : AdamWConfig :=
-  { beta1 := c.beta1, beta2 := c.beta2 }
-
--- tests
-theorem toAttnConfig_nEmbed (c : Config) : c.toAttnConfig.nEmbed = c.nEmbed := rfl
-theorem toAttnConfig_nHead (c : Config) : c.toAttnConfig.nHead = c.nHead := rfl
-theorem toMlpConfig_nEmbed (c : Config) : c.toMlpConfig.nEmbed = c.nEmbed := rfl
-#guard let c : Config := { nLayer := 1, nEmbed := 16, blockSize := 8, nHead := 4, vocabSize := 10, numSteps := 5 }; approxEq c.toAdamWConfig.beta1 0.85 && approxEq c.toAdamWConfig.beta2 0.99
+#guard let c : Config := { nLayer := 1, nEmbed := 16, blockSize := 8, nHead := 4, vocabSize := 10, numSteps := 5 }; approxEq c.beta1 0.85 && approxEq c.beta2 0.99
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -198,12 +185,10 @@ Forward pass
 -/
 
 def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array Float) : Tensor :=
-  let attnCfg := cfg.toAttnConfig
-  let mlpCfg := cfg.toMlpConfig
   let tokEmb := p.wte.gather input
   let posEmb := p.wpe.gather (Array.range input.size)
   let xInit := (tokEmb + posEmb).rmsnorm cfg.epsilon
-  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp mlpCfg (Tensor.attn attnCfg acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
+  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp cfg.nEmbed cfg.epsilon (Tensor.attn cfg.nEmbed cfg.nHead cfg.epsilon cfg.maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
   (x @ p.lmHead).maskedCE target mask
 
 #guard

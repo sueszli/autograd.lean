@@ -294,13 +294,6 @@ Attention
 ===--------------------------------------------------------------------------===
 -/
 
-structure AttnConfig where
-  nEmbed : Nat
-  nHead : Nat
-  epsilon : Float := 1e-5
-  maskValue : Float := -1.0e9
-  deriving Inhabited
-
 structure AttnCache where
   xPre : Array Float
   xPreRows : Nat
@@ -314,21 +307,21 @@ structure AttnCache where
   outFlat : Array Float
   deriving Inhabited
 
-def attnFwd (cfg : AttnConfig) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
-  let cols := cfg.nEmbed
-  let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
+def attnFwd (nEmbed nHead : Nat) (epsilon maskValue : Float) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
+  let cols := nEmbed
+  let (xn, rms) := rmsnormFwd xPre rows cols epsilon
   let qFlat := matmulFwd xn rows cols wq cols
   let kFlat := matmulFwd xn rows cols wk cols
   let vFlat := matmulFwd xn rows cols wv cols
-  let qs := splitHeadsFlat qFlat rows cols cfg.nHead
-  let ks := splitHeadsFlat kFlat rows cols cfg.nHead
-  let vs := splitHeadsFlat vFlat rows cols cfg.nHead
-  let headDim := cols / cfg.nHead
+  let qs := splitHeadsFlat qFlat rows cols nHead
+  let ks := splitHeadsFlat kFlat rows cols nHead
+  let vs := splitHeadsFlat vFlat rows cols nHead
+  let headDim := cols / nHead
   let invScale := 1.0 / Float.pow headDim.toFloat 0.5
   let (aws, outs) : Array (Array Float) × Array (Array Float) := Id.run do
     let mut aws : Array (Array Float) := #[]
     let mut outs : Array (Array Float) := #[]
-    for h in [0:cfg.nHead] do
+    for h in [0:nHead] do
       let q := qs[h]!; let k := ks[h]!; let v := vs[h]!
       let kT := transposeFlat k rows headDim
       let scores := matmulFwd q rows headDim kT rows
@@ -337,30 +330,30 @@ def attnFwd (cfg : AttnConfig) (xPre : Array Float) (rows : Nat) (wq wk wv wo : 
         let mut acc : Array Float := Array.replicate (rows * rows) 0.0
         for i in [0:rows] do
           for j in [0:rows] do
-            let v := if j ≤ i then scaled[i * rows + j]! else cfg.maskValue
+            let v := if j ≤ i then scaled[i * rows + j]! else maskValue
             acc := acc.set! (i * rows + j) v
         return acc
       let aw := softmaxRows masked rows rows
       aws := aws.push aw
       outs := outs.push (matmulFwd aw rows rows v headDim)
     (aws, outs)
-  let merged := mergeHeadsFlat outs rows cfg.nHead headDim
+  let merged := mergeHeadsFlat outs rows nHead headDim
   let outFlat := matmulFwd merged rows cols wo cols
   let outRes := maddFlat xPre outFlat
   (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
 
-def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
-  let cols := cfg.nEmbed
+def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
+  let cols := nEmbed
   let dMerged := matmulBwdX dout rows cols wo cols
   let dWo := matmulBwdW dout rows cols c.outFlat cols
-  let headDim := cols / cfg.nHead
-  let dOutHeads := splitHeadsFlat dMerged rows cols cfg.nHead
+  let headDim := cols / nHead
+  let dOutHeads := splitHeadsFlat dMerged rows cols nHead
   let invSqrt := 1.0 / Float.pow headDim.toFloat 0.5
   let (dqs, dks, dvs) : Array (Array Float) × Array (Array Float) × Array (Array Float) := Id.run do
     let mut dqs : Array (Array Float) := #[]
     let mut dks : Array (Array Float) := #[]
     let mut dvs : Array (Array Float) := #[]
-    for h in [0:cfg.nHead] do
+    for h in [0:nHead] do
       let aw := c.attnW[h]!
       let q := c.q[h]!; let k := c.k[h]!; let v := c.v[h]!
       let dHead := dOutHeads[h]!
@@ -379,9 +372,9 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
       dks := dks.push dkH
       dvs := dvs.push dvH
     (dqs, dks, dvs)
-  let dQflat := mergeHeadsFlat dqs rows cfg.nHead headDim
-  let dKflat := mergeHeadsFlat dks rows cfg.nHead headDim
-  let dVflat := mergeHeadsFlat dvs rows cfg.nHead headDim
+  let dQflat := mergeHeadsFlat dqs rows nHead headDim
+  let dKflat := mergeHeadsFlat dks rows nHead headDim
+  let dVflat := mergeHeadsFlat dvs rows nHead headDim
   let dXnQ := matmulBwdX dQflat rows cols wq cols
   let dXnK := matmulBwdX dKflat rows cols wk cols
   let dXnV := matmulBwdX dVflat rows cols wv cols
@@ -392,17 +385,15 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
   let dxPre := maddFlat dout (rmsnormBwd dXn c.xPre c.rms rows cols)
   (dxPre, (dWq, dWk, dWv, dWo))
 
-#guard let cfg : AttnConfig := { nEmbed := 4, nHead := 2 }
-       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+#guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0
-       let (out, _) := attnFwd cfg x 2 z z z z
+       let (out, _) := attnFwd 4 2 1e-5 (-1.0e9) x 2 z z z z
        arrApproxEq out x
-#guard let cfg : AttnConfig := { nEmbed := 4, nHead := 2 }
-       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+#guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0
        let dout : Array Float := #[1, 1, 1, 1, 1, 1, 1, 1]
-       let (_, c) := attnFwd cfg x 2 z z z z
-       let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd cfg dout 2 z z z z c
+       let (_, c) := attnFwd 4 2 1e-5 (-1.0e9) x 2 z z z z
+       let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd 4 2 dout 2 z z z z c
        arrApproxEq dxPre dout && dWq.size == 16 && dWk.size == 16 && dWv.size == 16 && dWo.size == 16
 
 /-!
@@ -410,11 +401,6 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
 MLP
 ===--------------------------------------------------------------------------===
 -/
-
-structure MlpConfig where
-  nEmbed : Nat
-  epsilon : Float := 1e-5
-  deriving Inhabited
 
 structure MlpCache where
   xPre : Array Float
@@ -427,10 +413,10 @@ structure MlpCache where
   hidden : Nat
   deriving Inhabited
 
-def mlpFwd (cfg : MlpConfig) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) : Array Float × MlpCache :=
-  let cols := cfg.nEmbed
+def mlpFwd (nEmbed : Nat) (epsilon : Float) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) : Array Float × MlpCache :=
+  let cols := nEmbed
   let hidden := 4 * cols
-  let (xn, rms) := rmsnormFwd xPre rows cols cfg.epsilon
+  let (xn, rms) := rmsnormFwd xPre rows cols epsilon
   let hPre := matmulFwd xn rows cols fc1 hidden
   let h := reluFlat hPre
   let y := matmulFwd h rows hidden fc2 cols
@@ -444,16 +430,14 @@ def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array F
   let dfc1 := matmulBwdW dhPre c.rows c.hidden c.xn c.cols
   (maddFlat dout (rmsnormBwd dxn c.xPre c.rms c.rows c.cols), (dfc1, dfc2))
 
-#guard let cfg : MlpConfig := { nEmbed := 4 }
-       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+#guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0
-       let (out, _) := mlpFwd cfg x 2 z z
+       let (out, _) := mlpFwd 4 1e-5 x 2 z z
        arrApproxEq out x
-#guard let cfg : MlpConfig := { nEmbed := 4 }
-       let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+#guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0
        let dout : Array Float := #[1, 1, 1, 1, 1, 1, 1, 1]
-       let (_, c) := mlpFwd cfg x 2 z z
+       let (_, c) := mlpFwd 4 1e-5 x 2 z z
        let (dxPre, (df1, df2)) := mlpBwd dout z z c
        arrApproxEq dxPre dout && df1.size == 64 && df2.size == 64
 
