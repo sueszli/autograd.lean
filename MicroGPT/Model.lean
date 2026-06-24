@@ -34,6 +34,7 @@ def Config.toMlpConfig (c : Config) : MlpConfig :=
 def Config.toAdamWConfig (c : Config) : AdamWConfig :=
   { beta1 := c.beta1, beta2 := c.beta2 }
 
+-- tests
 theorem toAttnConfig_nEmbed (c : Config) : c.toAttnConfig.nEmbed = c.nEmbed := rfl
 theorem toAttnConfig_nHead (c : Config) : c.toAttnConfig.nHead = c.nHead := rfl
 theorem toMlpConfig_nEmbed (c : Config) : c.toMlpConfig.nEmbed = c.nEmbed := rfl
@@ -61,6 +62,7 @@ structure Params where
   blocks : Array TransformerBlock
   deriving Inhabited
 
+-- tests
 theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl
 #guard let p : Params := { wte := Tensor.leaf #[1] 1 1 0 true, wpe := Tensor.leaf #[2] 1 1 1 true, lmHead := Tensor.leaf #[3] 1 1 2 true, blocks := #[] }; arrApproxEq p.wte.data #[1] && p.blocks.size == 0
 
@@ -88,6 +90,7 @@ theorem block_ids_increasing (h : Nat) : ParamIds.attnWq h < ParamIds.attnWk h �
 theorem blocks_disjoint (h : Nat) : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) := by unfold ParamIds.mlpFc2 ParamIds.attnWq ParamIds.blockBase; omega
 theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
 
+-- tests
 theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
 theorem global_ids : ParamIds.wte = 0 ∧ ParamIds.wpe = 1 ∧ ParamIds.lmHead = 2 := ⟨rfl, rfl, rfl⟩
 theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩

@@ -46,6 +46,7 @@ theorem transposeFlat_involution (x : Array Float) (r : Nat) (c : Nat) (h : x.si
     rw [transposeFlat_get _ c r (k % c) (k / c) hkc hkdc]
     rw [transposeFlat_get x r c (k / c) (k % c) hkdc hkc]
 
+-- tests
 theorem transposeFlat_size {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : (transposeFlat x r c).size = c * r := by simp [transposeFlat]
 theorem matmulFwd_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : (matmulFwd x n k W m).size = n * m := by simp [matmulFwd]
 theorem matmulBwdX_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX]
@@ -71,6 +72,7 @@ def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z
 def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
 
+-- tests
 theorem maddFlat_size {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : (maddFlat a b).size = a.size := by simp [maddFlat]
 theorem reluFlat_size (x : Array Float) : (reluFlat x).size = x.size := by simp [reluFlat]
 theorem reluBwdFlat_size (dout : Array Float) (hPre : Array Float) : (reluBwdFlat dout hPre).size = dout.size := by simp [reluBwdFlat]
@@ -120,6 +122,7 @@ theorem foldl_size_pres {α : Type} {K : Type} (l : List α) (init : Array K) (f
 
 theorem replicate_loop2_size {α : Type} {β : Type} {K : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : K) (g : Array K → α → β → Nat) (h : Array K → α → β → K) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n := (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
 
+-- tests
 theorem softmaxFlat_size (v : Array Float) : (softmaxFlat v).size = v.size := by unfold softmaxFlat; split <;> simp
 theorem softmaxRows_size (x : Array Float) (rows : Nat) (cols : Nat) : (softmaxRows x rows cols).size = rows * cols := by simp [softmaxRows, Id.run]; exact replicate_loop2_size ..
 theorem softmaxRowsBwd_size (aw : Array Float) (daw : Array Float) (rows : Nat) (cols : Nat) (scale : Float) : (softmaxRowsBwd aw daw rows cols scale).size = rows * cols := by simp [softmaxRowsBwd, Id.run]; exact replicate_loop2_size ..
@@ -154,6 +157,7 @@ def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Fl
         out := out.set! (i * dModel + col) xs[h]![i * headDim + j]!
     return out
 
+-- tests
 theorem splitHeadsFlat_count (x : Array Float) (n : Nat) (dModel : Nat) (nHead : Nat) : (splitHeadsFlat x n dModel nHead).size = nHead := by simp [splitHeadsFlat]
 theorem mergeHeadsFlat_size (xs : Array (Array Float)) (n : Nat) (nHead : Nat) (headDim : Nat) : (mergeHeadsFlat xs n nHead headDim).size = n * (nHead * headDim) := by simp [mergeHeadsFlat, Id.run]; exact replicate_loop2_size ..
 #guard let hs := splitHeadsFlat #[1, 2, 3, 4] 1 4 2; hs.size == 2 && arrApproxEq hs[0]! #[1, 2] && arrApproxEq hs[1]! #[3, 4]
@@ -201,6 +205,7 @@ theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h :
     rw [gatherFlat_get table cols (Array.range rows) (k / cols) (k % cols) (by rw [Array.size_range]; exact hkdc) hkc]
     rw [nat_range_getElem! _ _ hkdc]
 
+-- tests
 theorem gatherFlat_size (table : Array Float) (cols : Nat) (ids : Array Nat) : (gatherFlat table cols ids).size = ids.size * cols := by simp [gatherFlat]
 theorem scatterAddFlat_size (rows : Nat) (cols : Nat) (grad : Array Float) (ids : Array Nat) : (scatterAddFlat rows cols grad ids).size = rows * cols := by simp [scatterAddFlat, Id.run]; exact replicate_loop2_size ..
 #guard arrApproxEq (gatherFlat #[10, 11, 20, 21, 30, 31] 2 #[2, 0]) #[30, 31, 10, 11]
@@ -232,6 +237,7 @@ def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : A
         out := out.set! (i * cols + c) (m * (probs[i * cols + c]! - onehot) * inv)
     return out
 
+-- tests
 theorem maskedCrossEntropyBwd_size (probs : Array Float) (rows : Nat) (cols : Nat) (t : Array Nat) (mask : Array Float) (sumMask : Float) : (maskedCrossEntropyBwd probs rows cols t mask sumMask).size = rows * cols := by simp [maskedCrossEntropyBwd, Id.run]; exact replicate_loop2_size ..
 #guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[1] 1.0) (-Float.log 0.5)
 #guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[0] 0.0) 0.0
@@ -275,6 +281,7 @@ def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Ar
         out := out.set! (i * cols + j) g
     return out
 
+-- tests
 theorem rmsnormFwd_size (x : Array Float) (rows : Nat) (cols : Nat) (eps : Float) : (rmsnormFwd x rows cols eps).1.size = rows * cols := by simp [rmsnormFwd, Id.run]; exact replicate_loop2_size ..
 theorem rmsnormBwd_size (dy : Array Float) (x : Array Float) (scale : Array Float) (rows : Nat) (cols : Nat) : (rmsnormBwd dy x scale rows cols).size = rows * cols := by simp [rmsnormBwd, Id.run]; exact replicate_loop2_size ..
 #guard let (y, _) := rmsnormFwd #[3, 4] 1 2 0.0; approxEq ((y[0]! * y[0]! + y[1]! * y[1]!) / 2.0) 1.0

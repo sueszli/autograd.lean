@@ -3,10 +3,6 @@ namespace Autograd
 /-!
 ===--------------------------------------------------------------------------===
 Numerical comparison
-
-Helpers for the `#guard` test cases scattered through the library. `#guard e`
-errors at build time when `e : Bool` is `false`, so these double as a test
-suite that runs on every `lake build`.
 ===--------------------------------------------------------------------------===
 -/
 

@@ -128,6 +128,7 @@ theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array
     simp [hfresh k hk]
   rw [hnone]; simp
 
+-- tests
 theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by simp [zerosLike]
 #guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
 #guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
@@ -170,6 +171,7 @@ def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gradient
   let (p', m', v') := adamWBuf cfg step lr t.data g m v
   ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
 
+-- tests
 theorem adamWBuf_param_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).1.size = p.size := by simp [adamWBuf]
 theorem adamWBuf_m_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
 theorem adamWBuf_v_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.2.size = p.size := by simp [adamWBuf]

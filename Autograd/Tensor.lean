@@ -57,6 +57,7 @@ def rows (t : Tensor) : Nat := if t.shape.size = 0 then 0 else t.shape[0]!
 def cols (t : Tensor) : Nat := if t.shape.size < 2 then 1 else t.shape[1]!
 def leaf (data : Array Float) (rows cols id : Nat) (requiresGrad : Bool) : Tensor := { data := data, shape := #[rows, cols], id := id, requiresGrad := requiresGrad, gradFn := .leaf }
 
+-- tests
 theorem leaf_rows (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).rows = r := rfl
 theorem leaf_cols (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).cols = c := rfl
 theorem leaf_data (data : Array Float) (r : Nat) (c : Nat) (id : Nat) (rg : Bool) : (Tensor.leaf data r c id rg).data = data := rfl
@@ -107,6 +108,7 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
   { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
 
+-- adjoint identities
 theorem add_adjoint {n : Nat} {m : Nat} (A : Matrix (Fin n) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * (A + B)) = Matrix.trace (Gᵀ * A) + Matrix.trace (Gᵀ * B) := by rw [Matrix.mul_add, Matrix.trace_add]
 
 theorem matmulBwdX_adjoint {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * (X * W)) = Matrix.trace ((G * Wᵀ)ᵀ * X) := by rw [Matrix.transpose_mul, Matrix.transpose_transpose, ← Matrix.mul_assoc, Matrix.trace_mul_comm, ← Matrix.mul_assoc]
@@ -123,6 +125,7 @@ theorem scatter_apply {rows : Nat} {cols : Nat} (ids : Array Nat) (G : Matrix (F
 
 theorem linearLayer_grad {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (T : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Tᵀ * (X * W + B)) = Matrix.trace ((Xᵀ * T)ᵀ * W) + Matrix.trace (Tᵀ * B) := by rw [add_adjoint, matmulBwdW_adjoint]
 
+-- bridges: flat kernels = matrix ops
 def toMat {K : Type} [Inhabited K] (a : Array K) (rows : Nat) (cols : Nat) : Matrix (Fin rows) (Fin cols) K := Matrix.of fun i j => a[i.1 * cols + j.1]!
 
 theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K) : (Array.range n).foldl (fun s i => s + f i) 0 = ∑ i ∈ Finset.range n, f i := by
@@ -227,6 +230,7 @@ theorem layer_ce_chain {c : Nat} (zbase : Fin c → ℝ) (t : Fin c) (i : Fin c)
   have hh : HasDerivAt (fun w : ℝ => a * w + b) a w := by simpa using ((hasDerivAt_id w).const_mul a).add_const b
   rw [show (fun w => ceLoss (Function.update zbase i (a * w + b)) t) = (fun s => ceLoss (Function.update zbase i s) t) ∘ (fun w : ℝ => a * w + b) from rfl]
   exact hg.comp w hh
+-- tests
 theorem add_requiresGrad (a : Tensor) (b : Tensor) : (a + b).requiresGrad = (a.requiresGrad || b.requiresGrad) := rfl
 theorem add_shape (a : Tensor) (b : Tensor) : (a + b).shape = a.shape := rfl
 theorem matmul_requiresGrad (x : Tensor) (w : Tensor) : (x @ w).requiresGrad = (x.requiresGrad || w.requiresGrad) := rfl
@@ -384,6 +388,7 @@ theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (
     · rw [Array.getElem_setIfInBounds_ne hk hik] at hkp
       exact Or.inr ⟨p, Array.mem_iff_getElem.mpr ⟨k, hk, hkp⟩, hpj⟩
 
+-- tests
 #guard
   let gm := (Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 true + Tensor.leaf #[1, 2] 1 2 0 true).backwardAcc #[1, 1] #[]
   let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
