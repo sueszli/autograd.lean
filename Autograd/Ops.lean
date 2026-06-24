@@ -336,7 +336,7 @@ def attnFwd (nEmbed nHead : Nat) (epsilon maskValue : Float) (xPre : Array Float
       let aw := softmaxRows masked rows rows
       aws := aws.push aw
       outs := outs.push (matmulFwd aw rows rows v headDim)
-    (aws, outs)
+    return (aws, outs)
   let merged := mergeHeadsFlat outs rows nHead headDim
   let outFlat := matmulFwd merged rows cols wo cols
   let outRes := maddFlat xPre outFlat
@@ -371,7 +371,7 @@ def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo 
       dqs := dqs.push dqH
       dks := dks.push dkH
       dvs := dvs.push dvH
-    (dqs, dks, dvs)
+    return (dqs, dks, dvs)
   let dQflat := mergeHeadsFlat dqs rows nHead headDim
   let dKflat := mergeHeadsFlat dks rows nHead headDim
   let dVflat := mergeHeadsFlat dvs rows nHead headDim
