@@ -25,10 +25,10 @@ structure Config where
   maskValue : Float := -1.0e9
   deriving Inhabited
 
-def Config.toAttnConfig (c : Config) : AttnConfig :=
+private def Config.toAttnConfig (c : Config) : AttnConfig :=
   { nEmbed := c.nEmbed, nHead := c.nHead, epsilon := c.epsilon, maskValue := c.maskValue }
 
-def Config.toMlpConfig (c : Config) : MlpConfig :=
+private def Config.toMlpConfig (c : Config) : MlpConfig :=
   { nEmbed := c.nEmbed, epsilon := c.epsilon }
 
 def Config.toAdamWConfig (c : Config) : AdamWConfig :=
@@ -76,7 +76,7 @@ namespace ParamIds
 def wte : Nat := 0
 def wpe : Nat := 1
 def lmHead : Nat := 2
-def blockBase (h : Nat) : Nat := 3 + h * 6
+private def blockBase (h : Nat) : Nat := 3 + h * 6
 def attnWq (h : Nat) : Nat := blockBase h + 0
 def attnWk (h : Nat) : Nat := blockBase h + 1
 def attnWv (h : Nat) : Nat := blockBase h + 2
@@ -120,7 +120,7 @@ inductive Slot where
   | block (h : Nat) (r : Role)
   deriving DecidableEq
 
-def Role.offset : Role → Nat
+private def Role.offset : Role → Nat
   | .attnWq => 0
   | .attnWk => 1
   | .attnWv => 2
@@ -128,7 +128,7 @@ def Role.offset : Role → Nat
   | .mlpFc1 => 4
   | .mlpFc2 => 5
 
-def Slot.id : Slot → Nat
+private def Slot.id : Slot → Nat
   | .wte => ParamIds.wte
   | .wpe => ParamIds.wpe
   | .lmHead => ParamIds.lmHead
@@ -163,10 +163,10 @@ theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h 
     simp only [Slot.id, ParamIds.blockBase]
     omega
 
-def ParamIds.blockIds (h : Nat) : List Nat :=
+private def ParamIds.blockIds (h : Nat) : List Nat :=
   [ParamIds.attnWq h, ParamIds.attnWk h, ParamIds.attnWv h, ParamIds.attnWo h, ParamIds.mlpFc1 h, ParamIds.mlpFc2 h]
 
-def ParamIds.allIds : Nat → List Nat
+private def ParamIds.allIds : Nat → List Nat
   | 0 => [ParamIds.wte, ParamIds.wpe, ParamIds.lmHead]
   | n + 1 => ParamIds.allIds n ++ ParamIds.blockIds n
 

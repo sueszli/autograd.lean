@@ -12,14 +12,13 @@ Params walker
 ===--------------------------------------------------------------------------===
 -/
 
-private def paramLeaves (p : Params) : Array Tensor := Id.run do
-  let mut a : Array Tensor := #[p.wte, p.wpe, p.lmHead]
-  for b in p.blocks do
-    a := a.push b.attnWq |>.push b.attnWk |>.push b.attnWv |>.push b.attnWo |>.push b.mlpFc1 |>.push b.mlpFc2
-  return a
-
 def OptState.zeros (p : Params) : OptState :=
-  let entries := (paramLeaves p).map fun t => (t.id, zerosLike t)
+  let leaves : Array Tensor := Id.run do
+    let mut a : Array Tensor := #[p.wte, p.wpe, p.lmHead]
+    for b in p.blocks do
+      a := a.push b.attnWq |>.push b.attnWk |>.push b.attnWv |>.push b.attnWo |>.push b.mlpFc1 |>.push b.mlpFc2
+    return a
+  let entries := leaves.map fun t => (t.id, zerosLike t)
   { m := entries, v := entries }
 
 def adamWStep (cfg : Config) (step : Nat) (p : Params) (s : OptState) (gradientMap : Array (Nat × Array Float)) : Params × OptState :=

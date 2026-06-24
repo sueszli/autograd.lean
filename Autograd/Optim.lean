@@ -149,7 +149,7 @@ structure AdamWConfig where
   beta2 : Float := 0.99
   deriving Inhabited
 
-def adamWBuf (cfg : AdamWConfig) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
+private def adamWBuf (cfg : AdamWConfig) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
   let invBias1 := 1.0 / (1.0 - Float.pow cfg.beta1 t)
   let invBias2 := 1.0 / (1.0 - Float.pow cfg.beta2 t)

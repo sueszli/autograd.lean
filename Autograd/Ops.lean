@@ -67,9 +67,9 @@ Element-wise
 def maddFlat {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : Array K :=
   (Array.range a.size).map fun i => a[i]! + b[i]!
 
-def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z else 0.0
+private def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z else 0.0
 
-def reluBwdFlat (dout hPre : Array Float) : Array Float :=
+private def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
 
 -- tests
@@ -87,7 +87,7 @@ Softmax
 -/
 
 -- `e * (1/s)` not `e / s`: matches Python `__truediv__`.
-def softmaxFlat (v : Array Float) : Array Float :=
+private def softmaxFlat (v : Array Float) : Array Float :=
   if v.size = 0 then v
   else
     let mx := v.foldl (init := v[0]!) fun acc x => if x > acc then x else acc
@@ -104,7 +104,7 @@ def softmaxRows (x : Array Float) (rows cols : Nat) : Array Float :=
       for j in [0:cols] do out := out.set! (i * cols + j) sm[j]!
     return out
 
-def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Array Float :=
+private def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
     for i in [0:rows] do
@@ -138,7 +138,7 @@ Multi-head
 ===--------------------------------------------------------------------------===
 -/
 
-def splitHeadsFlat (x : Array Float) (n dModel nHead : Nat) : Array (Array Float) :=
+private def splitHeadsFlat (x : Array Float) (n dModel nHead : Nat) : Array (Array Float) :=
   let headDim := dModel / nHead
   (Array.range nHead).map fun h =>
     Id.run do
@@ -147,7 +147,7 @@ def splitHeadsFlat (x : Array Float) (n dModel nHead : Nat) : Array (Array Float
         for j in [0:headDim] do acc := acc.set! (i * headDim + j) x[i * dModel + h * headDim + j]!
       return acc
 
-def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Float :=
+private def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Float :=
   let dModel := nHead * headDim
   Id.run do
     let mut out : Array Float := Array.replicate (n * dModel) 0.0

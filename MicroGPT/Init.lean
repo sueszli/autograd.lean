@@ -12,7 +12,7 @@ Random init
 ===--------------------------------------------------------------------------===
 -/
 
-def initParams (cfg : Config) (rng : RngState) : Params × RngState := Id.run do
+private def initParams (cfg : Config) (rng : RngState) : Params × RngState := Id.run do
   let σ : Float := 0.08
   let mkLeaf (data : Array Float) (rows cols id : Nat) : Tensor :=
     Tensor.leaf data rows cols id true

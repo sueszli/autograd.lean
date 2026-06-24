@@ -8,11 +8,7 @@ Numerical comparison
 
 def approxEq (a : Float) (b : Float) (tol : Float := 1e-9) : Bool := (a - b).abs ≤ tol
 
-def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := 1e-9) : Bool :=
-  a.size == b.size && (Array.range a.size).all (fun i => approxEq a[i]! b[i]! tol)
-
-def maxAbsDiff (a : Array Float) (b : Array Float) : Float :=
-  (Array.range a.size).foldl (init := 0.0) (fun mx i => max mx (a[i]! - b[i]!).abs)
+def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := 1e-9) : Bool := a.isEqv b (approxEq · · tol)
 
 #guard approxEq 1.0 1.0
 #guard approxEq 1.0 (1.0 + 1e-12)
@@ -20,7 +16,6 @@ def maxAbsDiff (a : Array Float) (b : Array Float) : Float :=
 #guard arrApproxEq #[1.0, 2.0, 3.0] #[1.0, 2.0, 3.0]
 #guard arrApproxEq #[] #[]
 #guard !arrApproxEq #[1.0, 2.0] #[1.0, 2.0, 3.0]
-#guard approxEq (maxAbsDiff #[1.0, 5.0] #[1.0, 2.0]) 3.0
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -30,12 +25,12 @@ RNG
 
 structure RngState where s : UInt64 deriving Inhabited
 
-def rngNext (st : RngState) : Float × RngState :=
+private def rngNext (st : RngState) : Float × RngState :=
   let s' : UInt64 := 6364136223846793005 * st.s + 1442695040888963407
   let u : Float := (s' >>> 11).toFloat / 9007199254740992.0
   (u, { s := s' })
 
-def rngGauss (mean stddev : Float) (st : RngState) : Float × RngState :=
+private def rngGauss (mean stddev : Float) (st : RngState) : Float × RngState :=
   let (u1, st1) := rngNext st
   let (u2, st2) := rngNext st1
   let u1' := if u1 < 1e-300 then 1e-300 else u1

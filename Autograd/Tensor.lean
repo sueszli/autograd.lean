@@ -79,12 +79,9 @@ Ops implementations live in `Autograd/Ops.lean`.
 def gather (table : Tensor) (ids : Array Nat) : Tensor :=
   { data := gatherFlat table.data table.cols ids, shape := #[ids.size, table.cols], id := 0, requiresGrad := table.requiresGrad, gradFn := .gatherOp table ids }
 
-def add (a b : Tensor) : Tensor :=
-  { data := maddFlat a.data b.data, shape := a.shape, id := 0, requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }
+instance : Add Tensor := ⟨fun a b => { data := maddFlat a.data b.data, shape := a.shape, id := 0, requiresGrad := a.requiresGrad || b.requiresGrad, gradFn := .addOp a b }⟩
 
-instance : Add Tensor := ⟨Tensor.add⟩
-
-def matmul (x w : Tensor) : Tensor :=
+private def matmul (x w : Tensor) : Tensor :=
   let n := x.rows; let k := x.cols; let m := w.cols
   { data := matmulFwd x.data n k w.data m, shape := #[n, m], id := 0, requiresGrad := x.requiresGrad || w.requiresGrad, gradFn := .matmulOp x w }
 
@@ -117,7 +114,7 @@ theorem matmulBwdW_adjoint {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fi
 
 theorem transposeFlat_adjoint {n : Nat} {m : Nat} (X : Matrix (Fin m) (Fin n) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * Xᵀ) = Matrix.trace (Gᵀᵀ * X) := by rw [Matrix.transpose_transpose, ← Matrix.transpose_mul, Matrix.trace_transpose, Matrix.trace_mul_comm]
 
-def selection {rows : Nat} (ids : Array Nat) : Matrix (Fin ids.size) (Fin rows) ℝ := Matrix.of fun r j => if ids[r.1]'r.2 = (j : Nat) then 1 else 0
+private def selection {rows : Nat} (ids : Array Nat) : Matrix (Fin ids.size) (Fin rows) ℝ := Matrix.of fun r j => if ids[r.1]'r.2 = (j : Nat) then 1 else 0
 
 theorem gather_adjoint {rows : Nat} {cols : Nat} (ids : Array Nat) (table : Matrix (Fin rows) (Fin cols) ℝ) (G : Matrix (Fin ids.size) (Fin cols) ℝ) : Matrix.trace (Gᵀ * (selection (rows := rows) ids * table)) = Matrix.trace (((selection (rows := rows) ids)ᵀ * G)ᵀ * table) := matmulBwdW_adjoint (selection (rows := rows) ids) table G
 
@@ -126,7 +123,7 @@ theorem scatter_apply {rows : Nat} {cols : Nat} (ids : Array Nat) (G : Matrix (F
 theorem linearLayer_grad {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (T : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Tᵀ * (X * W + B)) = Matrix.trace ((Xᵀ * T)ᵀ * W) + Matrix.trace (Tᵀ * B) := by rw [add_adjoint, matmulBwdW_adjoint]
 
 -- bridges: flat kernels = matrix ops
-def toMat {K : Type} [Inhabited K] (a : Array K) (rows : Nat) (cols : Nat) : Matrix (Fin rows) (Fin cols) K := Matrix.of fun i j => a[i.1 * cols + j.1]!
+private def toMat {K : Type} [Inhabited K] (a : Array K) (rows : Nat) (cols : Nat) : Matrix (Fin rows) (Fin cols) K := Matrix.of fun i j => a[i.1 * cols + j.1]!
 
 theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K) : (Array.range n).foldl (fun s i => s + f i) 0 = ∑ i ∈ Finset.range n, f i := by
   induction n with
@@ -189,8 +186,8 @@ theorem maddFlat_kernel_grad (a : Array ℝ) (b : Array ℝ) (gArr : Array ℝ) 
 
 -- nonlinear ops: prove the backward rule equals the real derivative (Mathlib calculus), since the adjoint
 -- identity is not the gradient here. foundation: `∂ lse / ∂z_i = softmax_i`.
-noncomputable def lse {c : Nat} (z : Fin c → ℝ) : ℝ := Real.log (∑ j, Real.exp (z j))
-noncomputable def softmaxReal {c : Nat} (z : Fin c → ℝ) (i : Fin c) : ℝ := Real.exp (z i) / ∑ j, Real.exp (z j)
+private noncomputable def lse {c : Nat} (z : Fin c → ℝ) : ℝ := Real.log (∑ j, Real.exp (z j))
+private noncomputable def softmaxReal {c : Nat} (z : Fin c → ℝ) (i : Fin c) : ℝ := Real.exp (z i) / ∑ j, Real.exp (z j)
 
 theorem exp_sum_partial {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt (fun t => ∑ j, Real.exp (Function.update z i t j)) (Real.exp (z i)) (z i) := by
   have hfun : (fun t : ℝ => ∑ j, Real.exp (Function.update z i t j)) = ∑ j : Fin c, (fun t : ℝ => Real.exp (Function.update z i t j)) := by funext t; rw [Finset.sum_apply]
@@ -213,7 +210,7 @@ theorem lse_partial_deriv {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt
   simp only [Function.update_eq_self] at hlog
   exact hlog
 
-noncomputable def ceLoss {c : Nat} (z : Fin c → ℝ) (t : Fin c) : ℝ := lse z - z t
+private noncomputable def ceLoss {c : Nat} (z : Fin c → ℝ) (t : Fin c) : ℝ := lse z - z t
 
 theorem ce_partial_deriv {c : Nat} (z : Fin c → ℝ) (t : Fin c) (i : Fin c) : HasDerivAt (fun s => ceLoss (Function.update z i s) t) (softmaxReal z i - (if i = t then 1 else 0)) (z i) := by
   have hupd : HasDerivAt (fun s => (Function.update z i s) t) (if i = t then 1 else 0) (z i) := by
