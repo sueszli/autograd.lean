@@ -145,13 +145,15 @@ def main : IO Unit := do
   let refP ← paramsFromJson (← getObj j "final_weights")
 
   let mut p := initP
-  let mut s := OptState.zeros initP
+  let (m0, v0) := zeroMoments initP
+  let mut m := m0
+  let mut v := v0
   let startMs ← IO.monoMsNow
   let stdout ← IO.getStdout
   for step in [0:cfg.numSteps] do
     let lossT := forward p cfg inputs[step]! targets[step]! masks[step]!
-    let (p', s') := adamWStep cfg (step + 1) p s lossT.backward
-    p := p'; s := s'
+    let (p', m', v') := adamWStep cfg (step + 1) p m v lossT.backward
+    p := p'; m := m'; v := v'
     let elapsed := (← IO.monoMsNow) - startMs
     IO.print s!"\r{progressBar (step + 1) cfg.numSteps elapsed}  "
     stdout.flush
