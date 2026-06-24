@@ -6,11 +6,9 @@ Numerical comparison
 ===--------------------------------------------------------------------------===
 -/
 
-def atol : Float := 1e-9
+def approxEq (a : Float) (b : Float) (tol : Float := 1e-9) : Bool := (a - b).abs ≤ tol
 
-def approxEq (a : Float) (b : Float) (tol : Float := atol) : Bool := (a - b).abs ≤ tol
-
-def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := atol) : Bool := a.isEqv b (approxEq · · tol)
+def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := 1e-9) : Bool := a.isEqv b (approxEq · · tol)
 
 -- tests
 #guard approxEq 1.0 1.0
