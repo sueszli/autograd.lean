@@ -141,8 +141,10 @@ def main : IO Unit := do
   let j ← match Json.parse raw with
     | .ok j => pure j
     | .error e => throw (IO.userError s!"parse: {e}")
-  let vocabSize ← asNat (← getObj j "vocab_size")
-  let cfg : Config := { nLayer := 1, nEmbed := 16, blockSize := 16, nHead := 4, vocabSize := vocabSize, numSteps := 1000 }
+  let nLayer := 1
+  let nEmbed := 16
+  let nHead := 4
+  let numSteps := 1000
   let inputs ← parseNatRows (← getObj j "inputs")
   let targets ← parseNatRows (← getObj j "targets")
   let masks ← parseFloatRows (← getObj j "masks")
@@ -155,12 +157,12 @@ def main : IO Unit := do
   let mut v := v0
   let startMs ← IO.monoMsNow
   let stdout ← IO.getStdout
-  for step in [0:cfg.numSteps] do
-    let lossT := forward p cfg inputs[step]! targets[step]! masks[step]!
-    let (p', m', v') := adamWStep cfg (step + 1) p m v lossT.backward
+  for step in [0:numSteps] do
+    let lossT := forward p inputs[step]! targets[step]! masks[step]! nEmbed nHead
+    let (p', m', v') := adamWStep (step + 1) p m v lossT.backward numSteps
     p := p'; m := m'; v := v'
     let elapsed := (← IO.monoMsNow) - startMs
-    IO.print s!"\r{progressBar (step + 1) cfg.numSteps elapsed}  "
+    IO.print s!"\r{progressBar (step + 1) numSteps elapsed}  "
     stdout.flush
   IO.println ""
 
@@ -168,7 +170,7 @@ def main : IO Unit := do
   let atolStr := "1e-11"
   let pairs : Array (String × Tensor × Tensor) := Id.run do
     let mut a : Array (String × Tensor × Tensor) := #[("wte", p.wte, refP.wte), ("wpe", p.wpe, refP.wpe), ("lm_head", p.lmHead, refP.lmHead)]
-    for h in [0:cfg.nLayer] do
+    for h in [0:nLayer] do
       let b := p.blocks[h]!
       let r := refP.blocks[h]!
       a := a.push (s!"layer{h}.attn_wq", b.attnWq, r.attnWq)

@@ -7,29 +7,6 @@ open Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-Config
-===--------------------------------------------------------------------------===
--/
-
-structure Config where
-  nLayer : Nat
-  nEmbed : Nat
-  blockSize : Nat
-  nHead : Nat
-  vocabSize : Nat
-  numSteps : Nat
-  epsilon : Float := 1e-5
-  lr0 : Float := 0.01
-  beta1 : Float := 0.85
-  beta2 : Float := 0.99
-  maskValue : Float := -1.0e9
-  deriving Inhabited
-
--- tests
-#guard let c : Config := { nLayer := 1, nEmbed := 16, blockSize := 8, nHead := 4, vocabSize := 10, numSteps := 5 }; approxEq c.beta1 0.85 && approxEq c.beta2 0.99
-
-/-!
-===--------------------------------------------------------------------------===
 Parameter structures
 ===--------------------------------------------------------------------------===
 -/
@@ -87,13 +64,6 @@ theorem block1_ids : ParamIds.blockBase 1 = 9 ∧ ParamIds.attnWq 1 = 9 := ⟨rf
 /-!
 ===--------------------------------------------------------------------------===
 Parameter id injectivity
-
-The theorems above pin a few concrete ids; these prove the layout is
-collision-free for EVERY model size. `Slot` enumerates the parameter slots (3 globals plus 6 roles
-per block), `Slot.id` mirrors the `ParamIds` assignment, and the theorems show
-that map is injective and that `allIds` is exactly `List.range (3 + 6n)`: a
-gap-free bijection onto the gradient-buffer indices, so `backwardAcc` can never
-fold two distinct weights into one slot.
 ===--------------------------------------------------------------------------===
 -/
 
@@ -185,11 +155,11 @@ Forward pass
 ===--------------------------------------------------------------------------===
 -/
 
-def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array Float) : Tensor :=
+def forward (p : Params) (input target : Array Nat) (mask : Array Float) (nEmbed nHead : Nat) (epsilon : Float := 1e-5) (maskValue : Float := -1.0e9) : Tensor :=
   let tokEmb := p.wte.gather input
   let posEmb := p.wpe.gather (Array.range input.size)
-  let xInit := (tokEmb + posEmb).rmsnorm cfg.epsilon
-  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp cfg.nEmbed cfg.epsilon (Tensor.attn cfg.nEmbed cfg.nHead cfg.epsilon cfg.maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
+  let xInit := (tokEmb + posEmb).rmsnorm epsilon
+  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp nEmbed epsilon (Tensor.attn nEmbed nHead epsilon maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
   (x @ p.lmHead).maskedCE target mask
 
 -- tests
@@ -197,8 +167,7 @@ def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array
   let mk := fun (rows : Nat) (cols : Nat) (id : Nat) => Tensor.leaf (Array.replicate (rows * cols) 0.0) rows cols id true
   let blk : TransformerBlock := { attnWq := mk 2 2 (ParamIds.attnWq 0), attnWk := mk 2 2 (ParamIds.attnWk 0), attnWv := mk 2 2 (ParamIds.attnWv 0), attnWo := mk 2 2 (ParamIds.attnWo 0), mlpFc1 := mk 2 8 (ParamIds.mlpFc1 0), mlpFc2 := mk 8 2 (ParamIds.mlpFc2 0) }
   let p : Params := { wte := mk 2 2 ParamIds.wte, wpe := mk 2 2 ParamIds.wpe, lmHead := mk 2 2 ParamIds.lmHead, blocks := #[blk] }
-  let cfg : Config := { nLayer := 1, nEmbed := 2, blockSize := 2, nHead := 1, vocabSize := 2, numSteps := 1 }
-  let loss := forward p cfg #[0, 1] #[0, 1] #[1, 1]
+  let loss := forward p #[0, 1] #[0, 1] #[1, 1] 2 1
   let gm := loss.backward
   loss.shape == #[1, 1] && approxEq loss.data[0]! (-Float.log 0.5) && (gm.find? (fun e => e.1 == ParamIds.lmHead)).isSome
 
