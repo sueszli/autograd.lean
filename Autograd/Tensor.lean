@@ -92,11 +92,11 @@ def rmsnorm (a : Tensor) (eps : Float) : Tensor :=
   { data := y, shape := a.shape, id := 0, requiresGrad := a.requiresGrad, gradFn := .rmsnormOp a rms }
 
 def attn (nEmbed nHead : Nat) (epsilon maskValue : Float) (xPre wq wk wv wo : Tensor) : Tensor :=
-  let (out, cache) := attnFwd nEmbed nHead epsilon maskValue xPre.data xPre.rows wq.data wk.data wv.data wo.data
+  let (out, cache) := attnFwd nEmbed nHead xPre.data xPre.rows wq.data wk.data wv.data wo.data epsilon maskValue
   { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || wq.requiresGrad || wk.requiresGrad || wv.requiresGrad || wo.requiresGrad, gradFn := .attnOp xPre wq wk wv wo cache nEmbed nHead }
 
 def mlp (nEmbed : Nat) (epsilon : Float) (xPre fc1 fc2 : Tensor) : Tensor :=
-  let (out, cache) := mlpFwd nEmbed epsilon xPre.data xPre.rows fc1.data fc2.data
+  let (out, cache) := mlpFwd nEmbed xPre.data xPre.rows fc1.data fc2.data epsilon
   { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache }
 
 def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=

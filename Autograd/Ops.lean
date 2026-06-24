@@ -305,7 +305,7 @@ structure AttnCache where
   outFlat : Array Float
   deriving Inhabited
 
-def attnFwd (nEmbed nHead : Nat) (epsilon maskValue : Float) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) : Array Float × AttnCache :=
+def attnFwd (nEmbed nHead : Nat) (xPre : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (epsilon : Float := 1e-5) (maskValue : Float := -1.0e9) : Array Float × AttnCache :=
   let cols := nEmbed
   let (xn, rms) := rmsnormFwd xPre rows cols epsilon
   let qFlat := matmulFwd xn rows cols wq cols
@@ -386,12 +386,12 @@ def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo 
 -- tests
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0
-       let (out, _) := attnFwd 4 2 1e-5 (-1.0e9) x 2 z z z z
+       let (out, _) := attnFwd 4 2 x 2 z z z z
        arrApproxEq out x
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0
        let dout : Array Float := #[1, 1, 1, 1, 1, 1, 1, 1]
-       let (_, c) := attnFwd 4 2 1e-5 (-1.0e9) x 2 z z z z
+       let (_, c) := attnFwd 4 2 x 2 z z z z
        let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd 4 2 dout 2 z z z z c
        arrApproxEq dxPre dout && dWq.size == 16 && dWk.size == 16 && dWv.size == 16 && dWo.size == 16
 
@@ -412,7 +412,7 @@ structure MlpCache where
   hidden : Nat
   deriving Inhabited
 
-def mlpFwd (nEmbed : Nat) (epsilon : Float) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) : Array Float × MlpCache :=
+def mlpFwd (nEmbed : Nat) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) (epsilon : Float := 1e-5) : Array Float × MlpCache :=
   let cols := nEmbed
   let hidden := 4 * cols
   let (xn, rms) := rmsnormFwd xPre rows cols epsilon
@@ -432,12 +432,12 @@ def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array F
 -- tests
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0
-       let (out, _) := mlpFwd 4 1e-5 x 2 z z
+       let (out, _) := mlpFwd 4 x 2 z z
        arrApproxEq out x
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0
        let dout : Array Float := #[1, 1, 1, 1, 1, 1, 1, 1]
-       let (_, c) := mlpFwd 4 1e-5 x 2 z z
+       let (_, c) := mlpFwd 4 x 2 z z
        let (dxPre, (df1, df2)) := mlpBwd dout z z c
        arrApproxEq dxPre dout && df1.size == 64 && df2.size == 64
 
