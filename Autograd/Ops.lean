@@ -383,6 +383,7 @@ def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo 
   let dxPre := maddFlat dout (rmsnormBwd dXn c.xPre c.rms rows cols)
   (dxPre, (dWq, dWk, dWv, dWo))
 
+-- tests
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0
        let (out, _) := attnFwd 4 2 1e-5 (-1.0e9) x 2 z z z z
@@ -428,6 +429,7 @@ def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array F
   let dfc1 := matmulBwdW dhPre c.rows c.hidden c.xn c.cols
   (maddFlat dout (rmsnormBwd dxn c.xPre c.rms c.rows c.cols), (dfc1, dfc2))
 
+-- tests
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0
        let (out, _) := mlpFwd 4 1e-5 x 2 z z

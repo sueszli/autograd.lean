@@ -41,6 +41,7 @@ private def parseNatRows (j : Json) : IO (Array (Array Nat)) := do
 private def parseFloatRows (j : Json) : IO (Array (Array Float)) := do
   (← asArr j).mapM fun row => do (← asArr row).mapM asFloat
 
+-- tests
 -- `#eval`-as-test: a throwing IO action fails `lake build`, same as a false `#guard`
 #eval do
   let j ← IO.ofExcept (Json.parse "[[0, 2], [1, 3]]")
@@ -72,6 +73,7 @@ private def asRowsT (j : Json) : IO (Array Float × Nat × Nat) := do
 private def leafFrom (triple : Array Float × Nat × Nat) (id : Nat) : Tensor :=
   Tensor.leaf triple.1 triple.2.1 triple.2.2 id true
 
+-- tests
 #eval do
   let j ← IO.ofExcept (Json.parse "[[1, 2, 3], [4, 5, 6]]")
   let (flat, r, c) ← asRows j
@@ -92,6 +94,7 @@ private def paramsFromJson (j : Json) : IO Params := do
 
 private def miniWeights : String := "{\"wte\":[[1]],\"wpe\":[[2]],\"lm_head\":[[3]],\"layer0.attn_wq\":[[4]],\"layer0.attn_wk\":[[5]],\"layer0.attn_wv\":[[6]],\"layer0.attn_wo\":[[7]],\"layer0.mlp_fc1\":[[8]],\"layer0.mlp_fc2\":[[9]]}"
 
+-- tests
 #eval do
   let p ← paramsFromJson (← IO.ofExcept (Json.parse miniWeights))
   unless p.wte.id == ParamIds.wte && p.lmHead.id == ParamIds.lmHead && p.blocks[0]!.attnWq.id == ParamIds.attnWq 0 && p.blocks[0]!.mlpFc2.id == ParamIds.mlpFc2 0 do throw (IO.userError "paramsFromJson ids")
@@ -108,6 +111,7 @@ private def maxDiff (a b : Tensor) : Float :=
     let d := (a.data[i]! - b.data[i]!).abs
     if d > mx then d else mx
 
+-- tests
 #guard approxEq (maxDiff (Tensor.leaf #[1, 2, 5] 1 3 0 true) (Tensor.leaf #[1, 4, 1] 1 3 1 true)) 4.0
 
 /-!
@@ -127,6 +131,7 @@ private def progressBar (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
   let fmt := fun (ms : Nat) => let s := ms / 1000; let r := s % 60; s!"{s / 60}:" ++ (if r < 10 then s!"0{r}" else s!"{r}")
   s!"{pct}%|{bar}| {cur}/{total} [{fmt elapsedMs}<{fmt etaMs}, {rate}it/s]"
 
+-- tests
 #guard "0%|".isPrefixOf (progressBar 0 10 0)
 #guard "50%|".isPrefixOf (progressBar 5 10 0)
 #guard "100%|".isPrefixOf (progressBar 10 10 1000)

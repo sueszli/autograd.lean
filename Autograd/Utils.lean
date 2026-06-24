@@ -12,6 +12,7 @@ def approxEq (a : Float) (b : Float) (tol : Float := atol) : Bool := (a - b).abs
 
 def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := atol) : Bool := a.isEqv b (approxEq · · tol)
 
+-- tests
 #guard approxEq 1.0 1.0
 #guard approxEq 1.0 (1.0 + 1e-12)
 #guard !approxEq 1.0 1.1
@@ -45,6 +46,7 @@ def rngGaussFlat (r c : Nat) (σ : Float) (st : UInt64) : Array Float × UInt64 
     acc := acc.push x; s := s'
   return (acc, s)
 
+-- tests
 #guard approxEq (rngNext 42).1 (rngNext 42).1
 #guard let u := (rngNext 42).1; 0.0 ≤ u && u < 1.0
 #guard !approxEq (rngNext 42).1 (rngNext (rngNext 42).2).1

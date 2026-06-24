@@ -25,6 +25,7 @@ structure Config where
   maskValue : Float := -1.0e9
   deriving Inhabited
 
+-- tests
 #guard let c : Config := { nLayer := 1, nEmbed := 16, blockSize := 8, nHead := 4, vocabSize := 10, numSteps := 5 }; approxEq c.beta1 0.85 && approxEq c.beta2 0.99
 
 /-!
@@ -191,6 +192,7 @@ def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array
   let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp cfg.nEmbed cfg.epsilon (Tensor.attn cfg.nEmbed cfg.nHead cfg.epsilon cfg.maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
   (x @ p.lmHead).maskedCE target mask
 
+-- tests
 #guard
   let mk := fun (rows : Nat) (cols : Nat) (id : Nat) => Tensor.leaf (Array.replicate (rows * cols) 0.0) rows cols id true
   let blk : TransformerBlock := { attnWq := mk 2 2 (ParamIds.attnWq 0), attnWk := mk 2 2 (ParamIds.attnWk 0), attnWv := mk 2 2 (ParamIds.attnWv 0), attnWo := mk 2 2 (ParamIds.attnWo 0), mlpFc1 := mk 2 8 (ParamIds.mlpFc1 0), mlpFc2 := mk 8 2 (ParamIds.mlpFc2 0) }
