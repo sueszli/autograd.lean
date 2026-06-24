@@ -11,7 +11,6 @@ Matmul
 def transposeFlat {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : Array K :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
--- left-fold matches the loop's accumulation order; `matmulFwd_bridge` lifts it to `Matrix.mul`.
 def matmulFwd {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : Array K :=
   (Array.range (n * m)).map fun idx => (Array.range k).foldl (fun s kk => s + x[(idx / m) * k + kk]! * W[kk * m + (idx % m)]!) (0 : K)
 
@@ -251,7 +250,6 @@ RMS norm
 ===--------------------------------------------------------------------------===
 -/
 
--- `ms`/`scale`/`y` order matches Python; cache stores `scale = 1/√(ms+ε)`.
 def rmsnormFwd (x : Array Float) (rows cols : Nat) (eps : Float) : Array Float × Array Float :=
   let invD : Float := 1.0 / cols.toFloat
   let scales : Array Float := (Array.range rows).map fun i =>
