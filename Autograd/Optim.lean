@@ -5,7 +5,7 @@ namespace Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-State
+AdamW
 ===--------------------------------------------------------------------------===
 -/
 
@@ -20,6 +20,29 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   match a.findIdx? (fun (i, _) => i = id) with
   | some i => a.set! i (id, x)
   | none => a.push (id, x)
+
+-- `beta1`, `beta2` and `lr0` (in the model's Config) plus init `σ` were grid-searched for bit-exact parity with the Python reference.
+private def adamWBuf (beta1 beta2 : Float) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
+  let t := step.toFloat
+  let invBias1 := 1.0 / (1.0 - Float.pow beta1 t)
+  let invBias2 := 1.0 / (1.0 - Float.pow beta2 t)
+  let lrScaled := lr * invBias1
+  let oneMinusB1 := 1.0 - beta1
+  let oneMinusB2 := 1.0 - beta2
+  let eps : Float := 1e-8
+  let n := p.size
+  let nm : Array Float := (Array.range n).map fun i => beta1 * m[i]! + oneMinusB1 * g[i]!
+  let nv : Array Float := (Array.range n).map fun i => beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
+  let np : Array Float := (Array.range n).map fun i => p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
+  (np, nm, nv)
+
+def stepOne (beta1 beta2 : Float) (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (m v : Array (Nat × Array Float)) : Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
+  let z := zerosLike t
+  let g := lookup gradientMap t.id z
+  let mi := lookup m t.id z
+  let vi := lookup v t.id z
+  let (p', m', v') := adamWBuf beta1 beta2 step lr t.data g mi vi
+  ({ t with data := p' }, upsert m t.id m', upsert v t.id v')
 
 theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
   cases hx : xs.find? p with
@@ -125,46 +148,14 @@ theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array
 
 -- tests
 theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by simp [zerosLike]
+theorem adamWBuf_param_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_m_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_v_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
 #guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
 #guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
 #guard arrApproxEq (lookup #[(5, #[1, 2])] 9 #[0, 0]) #[0, 0]
 #guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]
 #guard let a := upsert #[(5, #[1, 2])] 6 #[3, 3]; a.size == 2 && arrApproxEq (lookup a 6 #[]) #[3, 3]
-
-/-!
-===--------------------------------------------------------------------------===
-AdamW
-===--------------------------------------------------------------------------===
--/
-
--- `beta1`, `beta2` and `lr0` (in the model's Config) plus init `σ` were grid-searched for bit-exact parity with the Python reference.
-
-private def adamWBuf (beta1 beta2 : Float) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
-  let t := step.toFloat
-  let invBias1 := 1.0 / (1.0 - Float.pow beta1 t)
-  let invBias2 := 1.0 / (1.0 - Float.pow beta2 t)
-  let lrScaled := lr * invBias1
-  let oneMinusB1 := 1.0 - beta1
-  let oneMinusB2 := 1.0 - beta2
-  let eps : Float := 1e-8
-  let n := p.size
-  let nm : Array Float := (Array.range n).map fun i => beta1 * m[i]! + oneMinusB1 * g[i]!
-  let nv : Array Float := (Array.range n).map fun i => beta2 * v[i]! + oneMinusB2 * g[i]! * g[i]!
-  let np : Array Float := (Array.range n).map fun i => p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
-  (np, nm, nv)
-
-def stepOne (beta1 beta2 : Float) (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (m v : Array (Nat × Array Float)) : Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
-  let z := zerosLike t
-  let g := lookup gradientMap t.id z
-  let mi := lookup m t.id z
-  let vi := lookup v t.id z
-  let (p', m', v') := adamWBuf beta1 beta2 step lr t.data g mi vi
-  ({ t with data := p' }, upsert m t.id m', upsert v t.id v')
-
--- tests
-theorem adamWBuf_param_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).1.size = p.size := by simp [adamWBuf]
-theorem adamWBuf_m_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
-theorem adamWBuf_v_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
 #guard let (np, nm, nv) := adamWBuf 0.85 0.99 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
 #guard let (np, nm, nv) := adamWBuf 0.85 0.99 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
 #guard let (t', _, _) := stepOne 0.85 0.99 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] #[] #[]; arrApproxEq t'.data #[5.0, -3.0]
