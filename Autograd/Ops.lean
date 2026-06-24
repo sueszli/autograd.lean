@@ -21,16 +21,8 @@ def matmulBwdX {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K
 def matmulBwdW {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : Array K :=
   (Array.range (k * m)).map fun idx => (Array.range n).foldl (fun s i => s + x[i * k + (idx / m)]! * dout[i * m + (idx % m)]!) (0 : K)
 
-theorem transposeFlat_size {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : (transposeFlat x r c).size = c * r := by simp [transposeFlat]
-theorem matmulFwd_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : (matmulFwd x n k W m).size = n * m := by simp [matmulFwd]
-theorem matmulBwdX_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX]
-theorem matmulBwdW_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW]
+theorem map_range_getElem! {K : Type} [Inhabited K] (f : Nat → K) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
 
--- `(Array.range n).map f` at `k < n` is `f k`; unfolds the `getElem!` default.
-theorem map_range_getElem! {K : Type} [Inhabited K] (f : Nat → K) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by
-  rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
-
--- output `(j, i)` = input `(i, j)`.
 theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : Nat) (hi : i < r) (hj : j < c) : (transposeFlat x r c)[j * r + i]! = x[i * c + j]! := by
   have hr : 0 < r := Nat.lt_of_le_of_lt (Nat.zero_le i) hi
   have hbound : j * r + i < c * r := by
@@ -41,7 +33,6 @@ theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : N
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (j * r + i) % r = i by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hi], show (j * r + i) / r = j by rw [Nat.mul_comm j r, Nat.mul_add_div hr, Nat.div_eq_of_lt hi, Nat.add_zero]]
 
--- transpose is its own inverse (back-transpose swaps dims to `c r`).
 theorem transposeFlat_involution (x : Array Float) (r : Nat) (c : Nat) (h : x.size = r * c) : transposeFlat (transposeFlat x r c) c r = x := by
   apply Array.ext
   · simp [transposeFlat, h]
@@ -55,11 +46,14 @@ theorem transposeFlat_involution (x : Array Float) (r : Nat) (c : Nat) (h : x.si
     rw [transposeFlat_get _ c r (k % c) (k / c) hkc hkdc]
     rw [transposeFlat_get x r c (k / c) (k % c) hkdc hkc]
 
+theorem transposeFlat_size {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : (transposeFlat x r c).size = c * r := by simp [transposeFlat]
+theorem matmulFwd_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : (matmulFwd x n k W m).size = n * m := by simp [matmulFwd]
+theorem matmulBwdX_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX]
+theorem matmulBwdW_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW]
 #guard arrApproxEq (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) #[1, 4, 2, 5, 3, 6]
-#guard arrApproxEq (transposeFlat (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) 3 2) #[1, 2, 3, 4, 5, 6]  -- transpose is its own inverse
+#guard arrApproxEq (transposeFlat (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) 3 2) #[1, 2, 3, 4, 5, 6]
 #guard arrApproxEq (matmulFwd #[1, 2, 3, 4] 2 2 #[1, 2, 3, 4] 2) #[7, 10, 15, 22]
-#guard arrApproxEq (matmulFwd #[1, 2, 3, 4, 5, 6] 2 3 #[1, 2, 3, 4, 5, 6] 2) #[22, 28, 49, 64]  -- rectangular `2×3 @ 3×2`, exercises `n ≠ m`
--- with an identity operand, `matmulBwdX`/`matmulBwdW` pass `dout` straight through
+#guard arrApproxEq (matmulFwd #[1, 2, 3, 4, 5, 6] 2 3 #[1, 2, 3, 4, 5, 6] 2) #[22, 28, 49, 64]
 #guard arrApproxEq (matmulBwdX #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
 #guard arrApproxEq (matmulBwdW #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
 
@@ -80,10 +74,9 @@ def reluBwdFlat (dout hPre : Array Float) : Array Float :=
 theorem maddFlat_size {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : (maddFlat a b).size = a.size := by simp [maddFlat]
 theorem reluFlat_size (x : Array Float) : (reluFlat x).size = x.size := by simp [reluFlat]
 theorem reluBwdFlat_size (dout : Array Float) (hPre : Array Float) : (reluBwdFlat dout hPre).size = dout.size := by simp [reluBwdFlat]
-
 #guard arrApproxEq (maddFlat #[1, 2, 3] #[3, 4, 5]) #[4, 6, 8]
-#guard arrApproxEq (reluFlat #[-1, 0, 2, -3]) #[0, 0, 2, 0]                  -- clamps negatives and exactly-zero
-#guard arrApproxEq (reluBwdFlat #[1, 1, 1, 1] #[-1, 0, 2, -3]) #[0, 0, 1, 0]  -- gradient gated by the pre-activation sign
+#guard arrApproxEq (reluFlat #[-1, 0, 2, -3]) #[0, 0, 2, 0]
+#guard arrApproxEq (reluBwdFlat #[1, 1, 1, 1] #[-1, 0, 2, -3]) #[0, 0, 1, 0]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -120,24 +113,20 @@ def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Ar
         out := out.set! (i * cols + j) g
     return out
 
--- shared `replicate`/`foldl`/`setIfInBounds` size plumbing: every nested-loop `_size` proof below discharges through `replicate_loop2_size`.
 theorem foldl_size_pres {α : Type} {K : Type} (l : List α) (init : Array K) (f : Array K → α → Array K) (hf : ∀ b a, (f b a).size = b.size) : (l.foldl f init).size = init.size := by
   induction l generalizing init with
   | nil => rfl
   | cons x xs ih => rw [List.foldl_cons, ih, hf]
 
-theorem replicate_loop2_size {α : Type} {β : Type} {K : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : K) (g : Array K → α → β → Nat) (h : Array K → α → β → K) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n :=
-  (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
+theorem replicate_loop2_size {α : Type} {β : Type} {K : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : K) (g : Array K → α → β → Nat) (h : Array K → α → β → K) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n := (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
 
 theorem softmaxFlat_size (v : Array Float) : (softmaxFlat v).size = v.size := by unfold softmaxFlat; split <;> simp
 theorem softmaxRows_size (x : Array Float) (rows : Nat) (cols : Nat) : (softmaxRows x rows cols).size = rows * cols := by simp [softmaxRows, Id.run]; exact replicate_loop2_size ..
 theorem softmaxRowsBwd_size (aw : Array Float) (daw : Array Float) (rows : Nat) (cols : Nat) (scale : Float) : (softmaxRowsBwd aw daw rows cols scale).size = rows * cols := by simp [softmaxRowsBwd, Id.run]; exact replicate_loop2_size ..
-
 #guard arrApproxEq (softmaxFlat #[0, 0, 0]) #[1.0 / 3, 1.0 / 3, 1.0 / 3]
-#guard approxEq ((softmaxFlat #[1, 2, 3]).foldl (· + ·) 0.0) 1.0                  -- normalized
-#guard arrApproxEq (softmaxFlat #[1, 2, 3]) (softmaxFlat #[-4, -3, -2])           -- shift-invariant (max-subtraction)
+#guard approxEq ((softmaxFlat #[1, 2, 3]).foldl (· + ·) 0.0) 1.0
+#guard arrApproxEq (softmaxFlat #[1, 2, 3]) (softmaxFlat #[-4, -3, -2])
 #guard let sm := softmaxRows #[1, 2, 1, 0] 2 2; approxEq (sm[0]! + sm[1]!) 1.0 && approxEq (sm[2]! + sm[3]!) 1.0
--- a row-constant upstream gradient maps to zero: the softmax Jacobian kills the common-mode component
 #guard arrApproxEq (softmaxRowsBwd (softmaxRows #[1, 2, 3, 4] 1 4) #[5, 5, 5, 5] 1 4 1.0) #[0, 0, 0, 0]
 
 /-!
@@ -167,10 +156,7 @@ def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : Array Fl
 
 theorem splitHeadsFlat_count (x : Array Float) (n : Nat) (dModel : Nat) (nHead : Nat) : (splitHeadsFlat x n dModel nHead).size = nHead := by simp [splitHeadsFlat]
 theorem mergeHeadsFlat_size (xs : Array (Array Float)) (n : Nat) (nHead : Nat) (headDim : Nat) : (mergeHeadsFlat xs n nHead headDim).size = n * (nHead * headDim) := by simp [mergeHeadsFlat, Id.run]; exact replicate_loop2_size ..
-
--- one row of `d_model = 4` splits into 2 heads of width 2: first half, second half
 #guard let hs := splitHeadsFlat #[1, 2, 3, 4] 1 4 2; hs.size == 2 && arrApproxEq hs[0]! #[1, 2] && arrApproxEq hs[1]! #[3, 4]
--- merge undoes split for a 2-row, 2-head buffer
 #guard arrApproxEq (mergeHeadsFlat (splitHeadsFlat #[1, 2, 3, 4, 5, 6, 7, 8] 2 4 2) 2 2 2) #[1, 2, 3, 4, 5, 6, 7, 8]
 
 /-!
@@ -179,7 +165,6 @@ Embedding scatter
 ===--------------------------------------------------------------------------===
 -/
 
--- decode `k` to `(k/cols, k%cols)`, re-encode source as `srcRow*cols+col`. dup ids fine.
 def gatherFlat {K : Type} [Inhabited K] (table : Array K) (cols : Nat) (ids : Array Nat) : Array K :=
   (Array.range (ids.size * cols)).map fun k => table[ids[k / cols]! * cols + k % cols]!
 
@@ -192,14 +177,8 @@ def scatterAddFlat {K : Type} [Add K] [Zero K] [Inhabited K] (rows : Nat) (cols 
         out := out.set! (id * cols + j) (out[id * cols + j]! + grad[i * cols + j]!)
     return out
 
-theorem gatherFlat_size (table : Array Float) (cols : Nat) (ids : Array Nat) : (gatherFlat table cols ids).size = ids.size * cols := by simp [gatherFlat]
-theorem scatterAddFlat_size (rows : Nat) (cols : Nat) (grad : Array Float) (ids : Array Nat) : (scatterAddFlat rows cols grad ids).size = rows * cols := by simp [scatterAddFlat, Id.run]; exact replicate_loop2_size ..
+theorem nat_range_getElem! (n : Nat) (i : Nat) (hi : i < n) : (Array.range n)[i]! = i := by rw [getElem!_pos _ i (by simp [hi]), Array.getElem_range]
 
--- `(Array.range n)[i] = i` for `i < n`.
-theorem nat_range_getElem! (n : Nat) (i : Nat) (hi : i < n) : (Array.range n)[i]! = i := by
-  rw [getElem!_pos _ i (by simp [hi]), Array.getElem_range]
-
--- output `(row, col)` = source `(ids[row], col)`.
 theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row : Nat) (col : Nat) (hrow : row < ids.size) (hcol : col < cols) : (gatherFlat table cols ids)[row * cols + col]! = table[ids[row]! * cols + col]! := by
   have hbound : row * cols + col < ids.size * cols := by
     have h2 : row * cols + cols = (row + 1) * cols := by rw [Nat.add_mul, Nat.one_mul]
@@ -209,7 +188,6 @@ theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (row * cols + col) % cols = col by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hcol], show (row * cols + col) / cols = row by rw [Nat.mul_comm row cols, Nat.mul_add_div (Nat.lt_of_le_of_lt (Nat.zero_le col) hcol), Nat.div_eq_of_lt hcol, Nat.add_zero]]
 
--- identity ids reproduce the table; corollary of `gatherFlat_get`.
 theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h : table.size = rows * cols) : gatherFlat table cols (Array.range rows) = table := by
   apply Array.ext
   · simp [gatherFlat, h]
@@ -223,9 +201,9 @@ theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h :
     rw [gatherFlat_get table cols (Array.range rows) (k / cols) (k % cols) (by rw [Array.size_range]; exact hkdc) hkc]
     rw [nat_range_getElem! _ _ hkdc]
 
--- ids [2, 0] select table rows 2 then 0
+theorem gatherFlat_size (table : Array Float) (cols : Nat) (ids : Array Nat) : (gatherFlat table cols ids).size = ids.size * cols := by simp [gatherFlat]
+theorem scatterAddFlat_size (rows : Nat) (cols : Nat) (grad : Array Float) (ids : Array Nat) : (scatterAddFlat rows cols grad ids).size = rows * cols := by simp [scatterAddFlat, Id.run]; exact replicate_loop2_size ..
 #guard arrApproxEq (gatherFlat #[10, 11, 20, 21, 30, 31] 2 #[2, 0]) #[30, 31, 10, 11]
--- ids [0, 0, 2] over 3 rows: row 0 accumulates both grads, row 1 stays zero, row 2 gets the third
 #guard arrApproxEq (scatterAddFlat 3 2 #[1, 1, 2, 2, 3, 3] #[0, 0, 2]) #[3, 3, 0, 0, 3, 3]
 
 /-!
@@ -255,14 +233,11 @@ def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : A
     return out
 
 theorem maskedCrossEntropyBwd_size (probs : Array Float) (rows : Nat) (cols : Nat) (t : Array Nat) (mask : Array Float) (sumMask : Float) : (maskedCrossEntropyBwd probs rows cols t mask sumMask).size = rows * cols := by simp [maskedCrossEntropyBwd, Id.run]; exact replicate_loop2_size ..
-
--- a 50/50 prediction on a 2-class target costs `-log 0.5`
 #guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[1] 1.0) (-Float.log 0.5)
-#guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[0] 0.0) 0.0          -- zero mask sum short-circuits to 0
-#guard approxEq (maskedCrossEntropy #[0.5, 0.5, 0.5, 0.5] 2 2 #[0, 1] #[1, 0] 1.0) (-Float.log 0.5)  -- per-token `mask=0` drops the second row from the sum
--- gradient is `probs - onehot` (scaled); it must sum to zero across the row
+#guard approxEq (maskedCrossEntropy #[0.5, 0.5] 1 2 #[0] #[0] 0.0) 0.0
+#guard approxEq (maskedCrossEntropy #[0.5, 0.5, 0.5, 0.5] 2 2 #[0, 1] #[1, 0] 1.0) (-Float.log 0.5)
 #guard arrApproxEq (maskedCrossEntropyBwd #[0.5, 0.5] 1 2 #[0] #[1] 1.0) #[-0.5, 0.5]
-#guard arrApproxEq (maskedCrossEntropyBwd #[0.5, 0.5, 0.5, 0.5] 2 2 #[0, 1] #[1, 0] 1.0) #[-0.5, 0.5, 0, 0]  -- masked row has zero gradient
+#guard arrApproxEq (maskedCrossEntropyBwd #[0.5, 0.5, 0.5, 0.5] 2 2 #[0, 1] #[1, 0] 1.0) #[-0.5, 0.5, 0, 0]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -302,11 +277,8 @@ def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Ar
 
 theorem rmsnormFwd_size (x : Array Float) (rows : Nat) (cols : Nat) (eps : Float) : (rmsnormFwd x rows cols eps).1.size = rows * cols := by simp [rmsnormFwd, Id.run]; exact replicate_loop2_size ..
 theorem rmsnormBwd_size (dy : Array Float) (x : Array Float) (scale : Array Float) (rows : Nat) (cols : Nat) : (rmsnormBwd dy x scale rows cols).size = rows * cols := by simp [rmsnormBwd, Id.run]; exact replicate_loop2_size ..
-
--- with `eps = 0` the normalized row has unit mean-square, and the scale is `(ms)^(-1/2)`
 #guard let (y, _) := rmsnormFwd #[3, 4] 1 2 0.0; approxEq ((y[0]! * y[0]! + y[1]! * y[1]!) / 2.0) 1.0
 #guard let (_, s) := rmsnormFwd #[3, 4] 1 2 0.0; approxEq s[0]! (Float.pow 12.5 (-0.5))
--- rmsnorm is scale-invariant, so the gradient along the input direction (`dy = x`, `eps = 0`) vanishes
 #guard let (_, rms) := rmsnormFwd #[3, 4] 1 2 0.0; arrApproxEq (rmsnormBwd #[3, 4] #[3, 4] rms 1 2) #[0, 0]
 
 /-!
@@ -413,13 +385,11 @@ def attnBwd (cfg : AttnConfig) (dout : Array Float) (rows : Nat) (wq wk wv wo : 
   let dxPre := maddFlat dout (rmsnormBwd dXn c.xPre c.rms rows cols)
   (dxPre, (dWq, dWk, dWv, dWo))
 
--- zero `wo` zeroes the attention contribution, so the residual passes the input through unchanged
 #guard let cfg : AttnConfig := { nEmbed := 4, nHead := 2 }
        let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0
        let (out, _) := attnFwd cfg x 2 z z z z
        arrApproxEq out x
--- zero weights leave only the residual path: `dxPre = dout`, weight grads zero-sized
 #guard let cfg : AttnConfig := { nEmbed := 4, nHead := 2 }
        let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 16 0.0
@@ -467,13 +437,11 @@ def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array F
   let dfc1 := matmulBwdW dhPre c.rows c.hidden c.xn c.cols
   (maddFlat dout (rmsnormBwd dxn c.xPre c.rms c.rows c.cols), (dfc1, dfc2))
 
--- zero `fc2` zeroes the MLP branch, so the residual passes the input through unchanged
 #guard let cfg : MlpConfig := { nEmbed := 4 }
        let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0
        let (out, _) := mlpFwd cfg x 2 z z
        arrApproxEq out x
--- zero weights leave only the residual gradient path: `dxPre = dout`
 #guard let cfg : MlpConfig := { nEmbed := 4 }
        let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0

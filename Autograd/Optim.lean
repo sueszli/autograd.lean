@@ -26,15 +26,6 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   | some i => a.set! i (id, x)
   | none => a.push (id, x)
 
-theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by simp [zerosLike]
-
-#guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
-#guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
-#guard arrApproxEq (lookup #[(5, #[1, 2])] 9 #[0, 0]) #[0, 0]                  -- missing id returns the fallback
-#guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]  -- existing id overwritten in place
-#guard let a := upsert #[(5, #[1, 2])] 6 #[3, 3]; a.size == 2 && arrApproxEq (lookup a 6 #[]) #[3, 3]  -- new id appended
-
--- `find? p` is unchanged by edits at slots `p` rejects (same size, each index agrees or both fail `p`).
 theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
   cases hx : xs.find? p with
   | none =>
@@ -66,7 +57,6 @@ theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (
       · rw [← he]; exact this
       · simp [hpyk]
 
--- a lookup reads back exactly the buffer just upserted, for any prior state `a`.
 theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (fallback : Array Float) : lookup (upsert a id x) id fallback = x := by
   unfold lookup upsert
   cases hf : a.findIdx? (fun (i, _) => i = id) with
@@ -93,7 +83,6 @@ theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Arra
       grind
     rw [hset]
 
--- an `upsert` at `id` leaves a lookup of a different key `j` unchanged (no aliasing).
 theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat) (x : Array Float) (fallback : Array Float) (hne : id ≠ j) : lookup (upsert a id x) j fallback = lookup a j fallback := by
   unfold lookup
   have key : (upsert a id x).find? (fun (i, _) => i = j) = a.find? (fun (i, _) => i = j) := by
@@ -127,11 +116,8 @@ theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat
         · left; simp [hik]
   rw [key]
 
--- overwriting an existing key keeps the buffer count fixed, so the moment table cannot leak slots across steps.
-theorem upsert_size_existing (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hmem : (a.findIdx? (fun (i, _) => i = id)).isSome = true) : (upsert a id x).size = a.size := by
-  unfold upsert; split <;> grind [Array.size_setIfInBounds]
+theorem upsert_size_existing (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hmem : (a.findIdx? (fun (i, _) => i = id)).isSome = true) : (upsert a id x).size = a.size := by unfold upsert; split <;> grind [Array.size_setIfInBounds]
 
--- a genuinely fresh key (no slot matches it) grows the buffer by exactly one.
 theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hfresh : ∀ (k : Nat) (hk : k < a.size), a[k].1 ≠ id) : (upsert a id x).size = a.size + 1 := by
   unfold upsert
   have hnone : a.findIdx? (fun (i, _) => i = id) = none := by
@@ -141,6 +127,13 @@ theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array
     obtain ⟨k, hk, rfl⟩ := hy
     simp [hfresh k hk]
   rw [hnone]; simp
+
+theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by simp [zerosLike]
+#guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
+#guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
+#guard arrApproxEq (lookup #[(5, #[1, 2])] 9 #[0, 0]) #[0, 0]
+#guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]
+#guard let a := upsert #[(5, #[1, 2])] 6 #[3, 3]; a.size == 2 && arrApproxEq (lookup a 6 #[]) #[3, 3]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -177,16 +170,11 @@ def stepOne (cfg : AdamWConfig) (step : Nat) (lr : Float) (t : Tensor) (gradient
   let (p', m', v') := adamWBuf cfg step lr t.data g m v
   ({ t with data := p' }, { m := upsert s.m t.id m', v := upsert s.v t.id v' })
 
--- all three outputs `(p', m', v')` match the param length, so the next step reads them back aligned
 theorem adamWBuf_param_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).1.size = p.size := by simp [adamWBuf]
 theorem adamWBuf_m_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
 theorem adamWBuf_v_size (cfg : AdamWConfig) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf cfg step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
-
--- first step from zero moments: `m = (1-β1)g`, `v = (1-β2)g²`, update `≈ lr` for `g > 0`.
 #guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
--- a zero gradient is a no-op: params and both moments stay put
 #guard let (np, nm, nv) := adamWBuf {} 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
--- `stepOne` pulls the grad for `t.id` out of the map; an empty map means zero grad, so data is unchanged
 #guard let (t', _) := stepOne {} 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] (default : OptState); arrApproxEq t'.data #[5.0, -3.0]
 
 end Autograd

@@ -34,7 +34,6 @@ def Config.toMlpConfig (c : Config) : MlpConfig :=
 def Config.toAdamWConfig (c : Config) : AdamWConfig :=
   { beta1 := c.beta1, beta2 := c.beta2 }
 
--- the per-op config projections copy the relevant fields out of the master `Config`
 theorem toAttnConfig_nEmbed (c : Config) : c.toAttnConfig.nEmbed = c.nEmbed := rfl
 theorem toAttnConfig_nHead (c : Config) : c.toAttnConfig.nHead = c.nHead := rfl
 theorem toMlpConfig_nEmbed (c : Config) : c.toMlpConfig.nEmbed = c.nEmbed := rfl
@@ -85,19 +84,14 @@ def mlpFc2 (h : Nat) : Nat := blockBase h + 5
 end ParamIds
 
 -- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
--- the layout guarantees it: the 3 globals occupy 0..2, then block `h` packs 6 strictly increasing
--- ids starting at `3 + h*6`, and each block ends (`mlpFc2`) strictly below the next block's start.
-theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
-theorem block_ids_increasing (h : Nat) : ParamIds.attnWq h < ParamIds.attnWk h ∧ ParamIds.attnWk h < ParamIds.attnWv h ∧ ParamIds.attnWv h < ParamIds.attnWo h ∧ ParamIds.attnWo h < ParamIds.mlpFc1 h ∧ ParamIds.mlpFc1 h < ParamIds.mlpFc2 h := by
-  unfold ParamIds.attnWq ParamIds.attnWk ParamIds.attnWv ParamIds.attnWo ParamIds.mlpFc1 ParamIds.mlpFc2 ParamIds.blockBase; omega
-theorem blocks_disjoint (h : Nat) : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) := by
-  unfold ParamIds.mlpFc2 ParamIds.attnWq ParamIds.blockBase; omega
-theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by
-  unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
+theorem block_ids_increasing (h : Nat) : ParamIds.attnWq h < ParamIds.attnWk h ∧ ParamIds.attnWk h < ParamIds.attnWv h ∧ ParamIds.attnWv h < ParamIds.attnWo h ∧ ParamIds.attnWo h < ParamIds.mlpFc1 h ∧ ParamIds.mlpFc1 h < ParamIds.mlpFc2 h := by unfold ParamIds.attnWq ParamIds.attnWk ParamIds.attnWv ParamIds.attnWo ParamIds.mlpFc1 ParamIds.mlpFc2 ParamIds.blockBase; omega
+theorem blocks_disjoint (h : Nat) : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) := by unfold ParamIds.mlpFc2 ParamIds.attnWq ParamIds.blockBase; omega
+theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
 
+theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
 theorem global_ids : ParamIds.wte = 0 ∧ ParamIds.wpe = 1 ∧ ParamIds.lmHead = 2 := ⟨rfl, rfl, rfl⟩
-theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩                  -- block 0 occupies ids 3..8
-theorem block1_ids : ParamIds.blockBase 1 = 9 ∧ ParamIds.attnWq 1 = 9 := ⟨rfl, rfl⟩               -- block 1 starts right after, no overlap
+theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩
+theorem block1_ids : ParamIds.blockBase 1 = 9 ∧ ParamIds.attnWq 1 = 9 := ⟨rfl, rfl⟩
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -131,20 +125,16 @@ def Role.offset : Role → Nat
   | .mlpFc1 => 4
   | .mlpFc2 => 5
 
--- mirrors the `ParamIds` layout: globals at `0..2`, role `r` of block `h` at `blockBase h + r.offset`.
 def Slot.id : Slot → Nat
   | .wte => ParamIds.wte
   | .wpe => ParamIds.wpe
   | .lmHead => ParamIds.lmHead
   | .block h r => ParamIds.blockBase h + r.offset
 
-theorem Role.offset_lt (r : Role) : r.offset < 6 := by
-  cases r <;> decide
+theorem Role.offset_lt (r : Role) : r.offset < 6 := by cases r <;> decide
 
-theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset) : r = r' := by
-  cases r <;> cases r' <;> simp_all [Role.offset]
+theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset) : r = r' := by cases r <;> cases r' <;> simp_all [Role.offset]
 
--- the slot-to-id map is globally injective over the whole parameter space (3 globals plus 6 roles in every block index), so `backwardAcc` can never fold two distinct weights into one gradient slot.
 theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id) : s = t := by
   cases s <;> cases t <;>
     simp_all [Slot.id, ParamIds.wte, ParamIds.wpe, ParamIds.lmHead, ParamIds.blockBase]
@@ -159,7 +149,6 @@ theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id) : s = t := by
     apply Role.offset_inj
     omega
 
--- strengthening: every in-bounds slot (`h < n`) lands inside the dense buffer range `[0, 3 + 6n)`; with `id_injective` this makes `Slot.id` a bijection onto the gradient-buffer indices.
 theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h < n) : s.id < 3 + 6 * n := by
   cases s with
   | wte => simp only [Slot.id, ParamIds.wte]; omega
@@ -174,15 +163,12 @@ theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h 
 def ParamIds.blockIds (h : Nat) : List Nat :=
   [ParamIds.attnWq h, ParamIds.attnWk h, ParamIds.attnWv h, ParamIds.attnWo h, ParamIds.mlpFc1 h, ParamIds.mlpFc2 h]
 
--- every parameter id of an `n`-layer model in assignment order: 3 globals, then 6 per block.
 def ParamIds.allIds : Nat → List Nat
   | 0 => [ParamIds.wte, ParamIds.wpe, ParamIds.lmHead]
   | n + 1 => ParamIds.allIds n ++ ParamIds.blockIds n
 
-theorem rangeAddSix (m : Nat) : List.range (m + 6) = List.range m ++ [m, m + 1, m + 2, m + 3, m + 4, m + 5] := by
-  rw [List.range_add]; rfl
+theorem rangeAddSix (m : Nat) : List.range (m + 6) = List.range m ++ [m, m + 1, m + 2, m + 3, m + 4, m + 5] := by rw [List.range_add]; rfl
 
--- the ids assigned to an `n`-layer model (3 globals then 6 per block, in declared order) are exactly the contiguous `List.range (3 + 6n)`: gap-free, overlap-free, so a flat gradient buffer of length `3 + 6n` covers every parameter and nothing else.
 theorem ParamIds.allIds_eq_range (n : Nat) : ParamIds.allIds n = List.range (3 + 6 * n) := by
   induction n with
   | zero => rfl
@@ -200,9 +186,7 @@ theorem ParamIds.allIds_eq_range (n : Nat) : ParamIds.allIds n = List.range (3 +
     have h5 : 3 + k * 6 + 5 = 3 + 6 * k + 5 := by omega
     rw [h0, h1, h2, h3, h4, h5]
 
--- the literal id list the model iterates over has no duplicates for any layer count, ruling out silent gradient aliasing on the concrete list (not just the abstract slot type).
-theorem ParamIds.allIds_nodup (n : Nat) : (ParamIds.allIds n).Nodup := by
-  rw [ParamIds.allIds_eq_range]; exact List.nodup_range
+theorem ParamIds.allIds_nodup (n : Nat) : (ParamIds.allIds n).Nodup := by rw [ParamIds.allIds_eq_range]; exact List.nodup_range
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -219,8 +203,6 @@ def forward (p : Params) (cfg : Config) (input target : Array Nat) (mask : Array
   let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp mlpCfg (Tensor.attn attnCfg acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
   (x @ p.lmHead).maskedCE target mask
 
--- end-to-end smoke test: zero weights drive every logit to 0, so softmax is uniform `0.5` and the
--- masked cross-entropy is `-log 0.5` per token. Also confirms backward reaches `lm_head`.
 #guard
   let mk := fun (rows : Nat) (cols : Nat) (id : Nat) => Tensor.leaf (Array.replicate (rows * cols) 0.0) rows cols id true
   let blk : TransformerBlock := { attnWq := mk 2 2 (ParamIds.attnWq 0), attnWk := mk 2 2 (ParamIds.attnWk 0), attnWv := mk 2 2 (ParamIds.attnWv 0), attnWo := mk 2 2 (ParamIds.attnWo 0), mlpFc1 := mk 2 8 (ParamIds.mlpFc1 0), mlpFc2 := mk 8 2 (ParamIds.mlpFc2 0) }

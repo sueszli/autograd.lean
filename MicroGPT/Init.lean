@@ -31,9 +31,7 @@ def initParams (cfg : Config) (rng : RngState) : Params × RngState := Id.run do
     blocks := blocks.push { attnWq := mkLeaf wq cfg.nEmbed cfg.nEmbed (ParamIds.attnWq h), attnWk := mkLeaf wk cfg.nEmbed cfg.nEmbed (ParamIds.attnWk h), attnWv := mkLeaf wv cfg.nEmbed cfg.nEmbed (ParamIds.attnWv h), attnWo := mkLeaf wo cfg.nEmbed cfg.nEmbed (ParamIds.attnWo h), mlpFc1 := mkLeaf fc1 cfg.nEmbed (4 * cfg.nEmbed) (ParamIds.mlpFc1 h), mlpFc2 := mkLeaf fc2 (4 * cfg.nEmbed) cfg.nEmbed (ParamIds.mlpFc2 h) }
   return ({ wte := mkLeaf wte cfg.vocabSize cfg.nEmbed ParamIds.wte, wpe := mkLeaf wpe cfg.blockSize cfg.nEmbed ParamIds.wpe, lmHead := mkLeaf lmHead cfg.nEmbed cfg.vocabSize ParamIds.lmHead, blocks := blocks }, r)
 
--- shapes, ids, and `requiresGrad` are wired correctly (wte is `vocab × nEmbed`, fc1 is `nEmbed × 4·nEmbed`)
 #guard let (p, _) := initParams { nLayer := 1, nEmbed := 2, blockSize := 2, nHead := 1, vocabSize := 3, numSteps := 1 } { s := 123 }; p.wte.data.size == 6 && p.wte.id == ParamIds.wte && p.wte.requiresGrad && p.blocks.size == 1 && p.blocks[0]!.mlpFc1.data.size == 16
--- the LCG is deterministic in the seed: same seed reproduces, different seeds diverge
 #guard arrApproxEq (initParams { nLayer := 1, nEmbed := 2, blockSize := 2, nHead := 1, vocabSize := 3, numSteps := 1 } { s := 123 }).1.wte.data (initParams { nLayer := 1, nEmbed := 2, blockSize := 2, nHead := 1, vocabSize := 3, numSteps := 1 } { s := 123 }).1.wte.data
 #guard !arrApproxEq (initParams { nLayer := 1, nEmbed := 2, blockSize := 2, nHead := 1, vocabSize := 3, numSteps := 1 } { s := 1 }).1.wte.data (initParams { nLayer := 1, nEmbed := 2, blockSize := 2, nHead := 1, vocabSize := 3, numSteps := 1 } { s := 2 }).1.wte.data
 

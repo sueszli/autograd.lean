@@ -76,7 +76,6 @@ private def leafFrom (triple : Array Float × Nat × Nat) (id : Nat) : Tensor :=
   let j ← IO.ofExcept (Json.parse "[[1, 2, 3], [4, 5, 6]]")
   let (flat, r, c) ← asRows j
   unless r == 2 && c == 3 && arrApproxEq flat #[1, 2, 3, 4, 5, 6] do throw (IO.userError "asRows")
-  -- asRowsT flips Python's [out × in] to matmul's [in × out], swapping the dims
   let (flatT, rT, cT) ← asRowsT j
   unless rT == 3 && cT == 2 && arrApproxEq flatT #[1, 4, 2, 5, 3, 6] do throw (IO.userError "asRowsT")
   let t := leafFrom (flat, r, c) 7
@@ -91,7 +90,6 @@ Weight loader
 private def paramsFromJson (j : Json) : IO Params := do
   return { wte := leafFrom (← asRows (← getObj j "wte")) ParamIds.wte, wpe := leafFrom (← asRows (← getObj j "wpe")) ParamIds.wpe, lmHead := leafFrom (← asRowsT (← getObj j "lm_head")) ParamIds.lmHead, blocks := #[{ attnWq := leafFrom (← asRowsT (← getObj j "layer0.attn_wq")) (ParamIds.attnWq 0), attnWk := leafFrom (← asRowsT (← getObj j "layer0.attn_wk")) (ParamIds.attnWk 0), attnWv := leafFrom (← asRowsT (← getObj j "layer0.attn_wv")) (ParamIds.attnWv 0), attnWo := leafFrom (← asRowsT (← getObj j "layer0.attn_wo")) (ParamIds.attnWo 0), mlpFc1 := leafFrom (← asRowsT (← getObj j "layer0.mlp_fc1")) (ParamIds.mlpFc1 0), mlpFc2 := leafFrom (← asRowsT (← getObj j "layer0.mlp_fc2")) (ParamIds.mlpFc2 0) }] }
 
--- minimal weight blob (1x1 matrices) to check the loader assigns the right `ParamIds` to each key
 private def miniWeights : String := "{\"wte\":[[1]],\"wpe\":[[2]],\"lm_head\":[[3]],\"layer0.attn_wq\":[[4]],\"layer0.attn_wk\":[[5]],\"layer0.attn_wv\":[[6]],\"layer0.attn_wo\":[[7]],\"layer0.mlp_fc1\":[[8]],\"layer0.mlp_fc2\":[[9]]}"
 
 #eval do
@@ -110,7 +108,6 @@ private def maxDiff (a b : Tensor) : Float :=
     let d := (a.data[i]! - b.data[i]!).abs
     if d > mx then d else mx
 
--- max elementwise gap: |2-4|=2, |5-1|=4 -> 4
 #guard approxEq (maxDiff (Tensor.leaf #[1, 2, 5] 1 3 0 true) (Tensor.leaf #[1, 4, 1] 1 3 1 true)) 4.0
 
 /-!
@@ -130,7 +127,6 @@ private def progressBar (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
   let fmt := fun (ms : Nat) => let s := ms / 1000; let r := s % 60; s!"{s / 60}:" ++ (if r < 10 then s!"0{r}" else s!"{r}")
   s!"{pct}%|{bar}| {cur}/{total} [{fmt elapsedMs}<{fmt etaMs}, {rate}it/s]"
 
--- the percentage prefix tracks `cur/total` (floor division)
 #guard "0%|".isPrefixOf (progressBar 0 10 0)
 #guard "50%|".isPrefixOf (progressBar 5 10 0)
 #guard "100%|".isPrefixOf (progressBar 10 10 1000)
