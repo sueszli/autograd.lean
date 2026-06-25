@@ -152,15 +152,15 @@ def main : IO Unit := do
   let refP ← paramsFromJson (← getObj j "final_weights")
 
   let mut p := initP
-  let (m0, v0) := zeroMoments initP
+  let (m0, v0) := zeroMoments (paramTensors initP)
   let mut m := m0
   let mut v := v0
   let startMs ← IO.monoMsNow
   let stdout ← IO.getStdout
   for step in [0:numSteps] do
     let lossT := forward p inputs[step]! targets[step]! masks[step]! nEmbed nHead
-    let (p', m', v') := adamWStep (step + 1) p m v lossT.backward
-    p := p'; m := m'; v := v'
+    let (ws, m', v') := adamWStep (step + 1) (paramTensors p) m v lossT.backward
+    p := ofTensors ws; m := m'; v := v'
     let elapsed := (← IO.monoMsNow) - startMs
     IO.print s!"\r{progressBar (step + 1) numSteps elapsed}  "
     stdout.flush

@@ -44,6 +44,23 @@ def stepOne (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × 
   let (p', m', v') := adamWBuf step lr t.data g mi vi beta1 beta2
   ({ t with data := p' }, upsert m t.id m', upsert v t.id v')
 
+def zeroMoments (ws : Array Tensor) : Array (Nat × Array Float) × Array (Nat × Array Float) :=
+  let entries := ws.map fun t => (t.id, zerosLike t)
+  (entries, entries)
+
+def adamWStep (step : Nat) (ws : Array Tensor) (m v gradientMap : Array (Nat × Array Float)) (numSteps : Nat := 1000) (lr0 : Float := 0.01) : Array Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
+  let progress : Float := if numSteps = 0 then 0.0 else (step - 1).toFloat / numSteps.toFloat
+  let lrRaw := lr0 * (1.0 - progress)
+  let lr := if lrRaw < 0.0 then 0.0 else lrRaw
+  Id.run do
+    let mut out : Array Tensor := #[]
+    let mut m := m
+    let mut v := v
+    for w in ws do
+      let (w', m', v') := stepOne step lr w gradientMap m v
+      out := out.push w'; m := m'; v := v'
+    return (out, m, v)
+
 theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
   cases hx : xs.find? p with
   | none =>
@@ -159,5 +176,7 @@ theorem adamWBuf_v_size (step : Nat) (lr : Float) (p : Array Float) (g : Array F
 #guard let (np, nm, nv) := adamWBuf 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
 #guard let (np, nm, nv) := adamWBuf 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
 #guard let (t', _, _) := stepOne 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] #[] #[]; arrApproxEq t'.data #[5.0, -3.0]
+#guard let ws := #[Tensor.leaf #[5.0, -3.0] 1 2 0 true, Tensor.leaf #[1.0] 1 1 1 true]; (zeroMoments ws).1.size == 2 && (zeroMoments ws).2.size == 2
+#guard let ws := #[Tensor.leaf #[5.0, -3.0] 1 2 0 true]; let (m, v) := zeroMoments ws; let (ws', _, _) := adamWStep 1 ws m v #[]; arrApproxEq ws'[0]!.data #[5.0, -3.0]
 
 end Autograd
