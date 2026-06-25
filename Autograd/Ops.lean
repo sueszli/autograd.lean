@@ -201,11 +201,11 @@ def scatterAddFlat {K : Type} [Add K] [Zero K] [Inhabited K] (rows : Nat) (cols 
         out := out.set! (id * cols + j) (out[id * cols + j]! + grad[i * cols + j]!)
     return out
 
--- the k-th entry of `Array.range n` is `k`
+-- looking up index works
 theorem nat_range_getElem! (n : Nat) (i : Nat) (hi : i < n)
     : (Array.range n)[i]! = i := by rw [getElem!_pos _ i (by simp [hi]), Array.getElem_range]
 
--- output row `row` is input row `ids[row]` (gather copies the selected rows)
+-- gather copies the selected rows
 theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row : Nat) (col : Nat) (hrow : row < ids.size) (hcol : col < cols)
     : (gatherFlat table cols ids)[row * cols + col]! = table[ids[row]! * cols + col]! := by
   have hbound : row * cols + col < ids.size * cols := by
@@ -216,7 +216,7 @@ theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (row * cols + col) % cols = col by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hcol], show (row * cols + col) / cols = row by rw [Nat.mul_comm row cols, Nat.mul_add_div (Nat.lt_of_le_of_lt (Nat.zero_le col) hcol), Nat.div_eq_of_lt hcol, Nat.add_zero]]
 
--- gathering with identity indices `[0,1,…]` returns the table unchanged
+-- gather with identity indices `[0,1,…]` returns identity
 theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h : table.size = rows * cols)
     : gatherFlat table cols (Array.range rows) = table := by
   apply Array.ext
@@ -251,7 +251,6 @@ def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Arra
     acc - mask[i]! * Float.log pClamp
   if sumMask == 0.0 then 0.0 else (1.0 / sumMask) * total
 
--- gradient `probs - onehot`, masked per row and averaged by the mask weight
 def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat) (mask : Array Float) (sumMask : Float) : Array Float :=
   let inv := if sumMask == 0.0 then 0.0 else 1.0 / sumMask
   Id.run do
@@ -274,7 +273,7 @@ theorem maskedCrossEntropyBwd_size (probs : Array Float) (rows : Nat) (cols : Na
 
 /-!
 ===--------------------------------------------------------------------------===
-RMS norm
+Root mean square norm
 ===--------------------------------------------------------------------------===
 -/
 
@@ -294,7 +293,6 @@ def rmsnormFwd (x : Array Float) (rows cols : Nat) (eps : Float) : Array Float �
     return out
   (y, scales)
 
--- gradient through RMS-norm: scaled input minus its projection onto the normalized direction
 def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Array Float :=
   let dF := cols.toFloat
   Id.run do
@@ -427,7 +425,7 @@ def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo 
 
 /-!
 ===--------------------------------------------------------------------------===
-MLP
+Multilayer perceptron
 ===--------------------------------------------------------------------------===
 -/
 
@@ -451,7 +449,6 @@ def mlpFwd (nEmbed : Nat) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Flo
   let y := matmulFwd h rows hidden fc2 cols
   (maddFlat xPre y, { xPre := xPre, xn := xn, rows := rows, cols := cols, rms := rms, hPre := hPre, h := h, hidden := hidden })
 
--- backward of the MLP block: returns the input gradient plus the fc1/fc2 weight grads
 def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array Float × (Array Float × Array Float) :=
   let dh := matmulBwdX dout c.rows c.cols fc2 c.hidden
   let dfc2 := matmulBwdW dout c.rows c.cols c.h c.hidden
