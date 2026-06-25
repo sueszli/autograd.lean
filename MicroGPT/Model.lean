@@ -6,7 +6,7 @@ open Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-Parameter structures
+Parameters
 ===--------------------------------------------------------------------------===
 -/
 
@@ -40,16 +40,6 @@ instance : Weights Params where
       let mlpFc2 ← f b.mlpFc2
       pure { attnWq, attnWk, attnWv, attnWo, mlpFc1, mlpFc2 }
     pure { wte, wpe, lmHead, blocks }
-
--- tests
-theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl
-#guard let p : Params := { wte := Tensor.leaf #[1] 1 1 0 true, wpe := Tensor.leaf #[2] 1 1 1 true, lmHead := Tensor.leaf #[3] 1 1 2 true, blocks := #[] }; arrApproxEq p.wte.data #[1] && p.blocks.size == 0
-
-/-!
-===--------------------------------------------------------------------------===
-Parameter ids
-===--------------------------------------------------------------------------===
--/
 
 namespace ParamIds
 def wte : Nat := 0
@@ -175,6 +165,8 @@ theorem ParamIds.allIds_nodup (n : Nat)
     : (ParamIds.allIds n).Nodup := by rw [ParamIds.allIds_eq_range]; exact List.nodup_range
 
 -- tests
+theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl
+#guard let p : Params := { wte := Tensor.leaf #[1] 1 1 0 true, wpe := Tensor.leaf #[2] 1 1 1 true, lmHead := Tensor.leaf #[3] 1 1 2 true, blocks := #[] }; arrApproxEq p.wte.data #[1] && p.blocks.size == 0
 theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
 theorem global_ids : ParamIds.wte = 0 ∧ ParamIds.wpe = 1 ∧ ParamIds.lmHead = 2 := ⟨rfl, rfl, rfl⟩
 theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩
