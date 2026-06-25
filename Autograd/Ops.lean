@@ -77,7 +77,6 @@ def maddFlat {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : Arra
 private def reluFlat (x : Array Float) : Array Float :=
   x.map fun z => if z > 0.0 then z else 0.0
 
--- gradient passes through where the pre-activation was positive, else zero
 private def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
 
