@@ -10,5 +10,6 @@
 an automatic differentiation engine written in lean, a functional language with a
 built-in proof checker.
 
-counterpart to github.com/sueszli/autograd.c
-prioritizes correctness over performance.
+it prioritizes correctness and verifiability over performance.
+check out its counterpart: github.com/sueszli/autograd.c
+

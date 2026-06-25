@@ -18,7 +18,7 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   | some i => a.set! i (id, x)
   | none => a.push (id, x)
 
--- adam params grid-searched for bit-exact parity with the Python reference
+-- grid-searched params for bit-exact parity with the Python reference
 private def adamWBuf (step : Nat) (lr : Float) (p g m v : Array Float) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
   let invBias1 := 1.0 / (1.0 - Float.pow beta1 t)
