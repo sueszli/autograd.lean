@@ -367,7 +367,6 @@ def attnFwd (nEmbed nHead : Nat) (xPre : Array Float) (rows : Nat) (wq wk wv wo 
   let outRes := maddFlat xPre outFlat
   (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
 
--- backward of the attention block: returns the input gradient plus the q/k/v/o weight grads
 def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
   let cols := nEmbed
   let dMerged := matmulBwdX dout rows cols wo cols
