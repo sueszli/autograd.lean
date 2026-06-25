@@ -1,4 +1,4 @@
-import Autograd.Json
+import MicroGPT.Utils
 import MicroGPT.Model
 import Lean.Data.Json
 
@@ -55,7 +55,7 @@ def main : IO Unit := do
     let (p', m', v') := adamWStep (step + 1) p m v lossT.backward
     p := p'; m := m'; v := v'
     let elapsed := (← IO.monoMsNow) - startMs
-    IO.print s!"\r{progressBar (step + 1) numSteps elapsed}  "
+    IO.print s!"\r{tqdm (step + 1) numSteps elapsed}  "
     stdout.flush
   IO.println ""
 
@@ -75,7 +75,7 @@ def main : IO Unit := do
     return a
   let mut failures : Array (String × Float) := #[]
   for (label, a, b) in pairs do
-    let mx := maxDiff a b
+    let mx := arrMaxDiff a.data b.data
     if mx > atol then failures := failures.push (label, mx)
   let totalMs := (← IO.monoMsNow) - startMs
   let ms := totalMs % 1000

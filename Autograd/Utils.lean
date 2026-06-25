@@ -10,6 +10,11 @@ def approxEq (a : Float) (b : Float) (tol : Float := 1e-9) : Bool := (a - b).abs
 
 def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := 1e-9) : Bool := a.isEqv b (approxEq · · tol)
 
+def arrMaxDiff (a : Array Float) (b : Array Float) : Float :=
+  (Array.range a.size).foldl (init := 0.0) fun mx i =>
+    let d := (a[i]! - b[i]!).abs
+    if d > mx then d else mx
+
 -- tests
 #guard approxEq 1.0 1.0
 #guard approxEq 1.0 (1.0 + 1e-12)
@@ -17,6 +22,7 @@ def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := 1e-9) : Bool
 #guard arrApproxEq #[1.0, 2.0, 3.0] #[1.0, 2.0, 3.0]
 #guard arrApproxEq #[] #[]
 #guard !arrApproxEq #[1.0, 2.0] #[1.0, 2.0, 3.0]
+#guard approxEq (arrMaxDiff #[1, 2, 5] #[1, 4, 1]) 4.0
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -24,8 +30,7 @@ Progress bar
 ===--------------------------------------------------------------------------===
 -/
 
--- tqdm-style in-place bar: `\r` rewrites the same line, flush forces it to show.
-def progressBar (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
+def tqdm (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
   let width := 30
   let filled := (cur * width) / total
   let bar := String.ofList (List.replicate filled '█') ++ String.ofList (List.replicate (width - filled) ' ')
@@ -36,8 +41,8 @@ def progressBar (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
   s!"{pct}%|{bar}| {cur}/{total} [{fmt elapsedMs}<{fmt etaMs}, {rate}it/s]"
 
 -- tests
-#guard "0%|".isPrefixOf (progressBar 0 10 0)
-#guard "50%|".isPrefixOf (progressBar 5 10 0)
-#guard "100%|".isPrefixOf (progressBar 10 10 1000)
+#guard "0%|".isPrefixOf (tqdm 0 10 0)
+#guard "50%|".isPrefixOf (tqdm 5 10 0)
+#guard "100%|".isPrefixOf (tqdm 10 10 1000)
 
 end Autograd

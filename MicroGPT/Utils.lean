@@ -1,12 +1,13 @@
 import Autograd.Tensor
 import Lean.Data.Json
 
-namespace Autograd
+namespace MicroGPT
+open Autograd
 open Lean (Json)
 
 /-!
 ===--------------------------------------------------------------------------===
-JSON primitives
+JSON
 ===--------------------------------------------------------------------------===
 -/
 
@@ -36,21 +37,6 @@ def parseNatRows (j : Json) : IO (Array (Array Nat)) := do
 def parseFloatRows (j : Json) : IO (Array (Array Float)) := do
   (← asArr j).mapM fun row => do (← asArr row).mapM asFloat
 
--- tests
--- `#eval`-as-test: a throwing IO action fails `lake build`, same as a false `#guard`
-#eval do
-  let j ← IO.ofExcept (Json.parse "[[0, 2], [1, 3]]")
-  unless (← parseNatRows j) == #[#[0, 2], #[1, 3]] do throw (IO.userError "parseNatRows")
-#eval do
-  let j ← IO.ofExcept (Json.parse "[[0.5, 1.5]]")
-  unless arrApproxEq (← parseFloatRows j)[0]! #[0.5, 1.5] do throw (IO.userError "parseFloatRows")
-
-/-!
-===--------------------------------------------------------------------------===
-Tensor JSON loaders
-===--------------------------------------------------------------------------===
--/
-
 def asRows (j : Json) : IO (Array Float × Nat × Nat) := do
   let rows ← asArr j
   let r := rows.size
@@ -69,6 +55,13 @@ def leafFrom (triple : Array Float × Nat × Nat) (id : Nat) : Tensor :=
   Tensor.leaf triple.1 triple.2.1 triple.2.2 id true
 
 -- tests
+-- `#eval`-as-test: a throwing IO action fails `lake build`, same as a false `#guard`
+#eval do
+  let j ← IO.ofExcept (Json.parse "[[0, 2], [1, 3]]")
+  unless (← parseNatRows j) == #[#[0, 2], #[1, 3]] do throw (IO.userError "parseNatRows")
+#eval do
+  let j ← IO.ofExcept (Json.parse "[[0.5, 1.5]]")
+  unless arrApproxEq (← parseFloatRows j)[0]! #[0.5, 1.5] do throw (IO.userError "parseFloatRows")
 #eval do
   let j ← IO.ofExcept (Json.parse "[[1, 2, 3], [4, 5, 6]]")
   let (flat, r, c) ← asRows j
@@ -78,18 +71,4 @@ def leafFrom (triple : Array Float × Nat × Nat) (id : Nat) : Tensor :=
   let t := leafFrom (flat, r, c) 7
   unless t.id == 7 && t.rows == 2 && t.cols == 3 do throw (IO.userError "leafFrom")
 
-/-!
-===--------------------------------------------------------------------------===
-Tensor diff
-===--------------------------------------------------------------------------===
--/
-
-def maxDiff (a b : Tensor) : Float :=
-  (Array.range a.data.size).foldl (init := 0.0) fun mx i =>
-    let d := (a.data[i]! - b.data[i]!).abs
-    if d > mx then d else mx
-
--- tests
-#guard approxEq (maxDiff (Tensor.leaf #[1, 2, 5] 1 3 0 true) (Tensor.leaf #[1, 4, 1] 1 3 1 true)) 4.0
-
-end Autograd
+end MicroGPT
