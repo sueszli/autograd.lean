@@ -68,7 +68,8 @@ def adamWStep {α : Type} [Weights α] (step : Nat) (p : α) (m v gradientMap : 
   (p', s.1, s.2)
 
 -- find? is unchanged by edits at positions its predicate rejects
-theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
+theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false))
+    : xs.find? p = ys.find? p := by
   cases hx : xs.find? p with
   | none =>
     rw [Array.find?_eq_none] at hx
@@ -100,7 +101,8 @@ theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (
       · simp [hpyk]
 
 -- looking up a key right after upserting it returns the new value
-theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (fallback : Array Float) : lookup (upsert a id x) id fallback = x := by
+theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (fallback : Array Float)
+    : lookup (upsert a id x) id fallback = x := by
   unfold lookup upsert
   cases hf : a.findIdx? (fun (i, _) => i = id) with
   | none =>
@@ -127,7 +129,8 @@ theorem lookup_upsert_same (a : Array (Nat × Array Float)) (id : Nat) (x : Arra
     rw [hset]
 
 -- upserting one key leaves lookups of other keys unchanged
-theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat) (x : Array Float) (fallback : Array Float) (hne : id ≠ j) : lookup (upsert a id x) j fallback = lookup a j fallback := by
+theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat) (x : Array Float) (fallback : Array Float) (hne : id ≠ j)
+    : lookup (upsert a id x) j fallback = lookup a j fallback := by
   unfold lookup
   have key : (upsert a id x).find? (fun (i, _) => i = j) = a.find? (fun (i, _) => i = j) := by
     unfold upsert
@@ -161,10 +164,12 @@ theorem lookup_upsert_other (a : Array (Nat × Array Float)) (id : Nat) (j : Nat
   rw [key]
 
 -- overwriting an existing key keeps the buffer size
-theorem upsert_size_existing (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hmem : (a.findIdx? (fun (i, _) => i = id)).isSome = true) : (upsert a id x).size = a.size := by unfold upsert; split <;> grind [Array.size_setIfInBounds]
+theorem upsert_size_existing (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hmem : (a.findIdx? (fun (i, _) => i = id)).isSome = true)
+    : (upsert a id x).size = a.size := by unfold upsert; split <;> grind [Array.size_setIfInBounds]
 
 -- inserting a genuinely new key grows the buffer by one
-theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hfresh : ∀ (k : Nat) (hk : k < a.size), a[k].1 ≠ id) : (upsert a id x).size = a.size + 1 := by
+theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float) (hfresh : ∀ (k : Nat) (hk : k < a.size), a[k].1 ≠ id)
+    : (upsert a id x).size = a.size + 1 := by
   unfold upsert
   have hnone : a.findIdx? (fun (i, _) => i = id) = none := by
     rw [Array.findIdx?_eq_none_iff]

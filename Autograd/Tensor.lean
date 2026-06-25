@@ -105,7 +105,7 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
   { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
 
-private def selection {rows : Nat} (ids : Array Nat) : Matrix (Fin ids.size) (Fin rows) ℝ := Matrix.of fun r j => if ids[r.1]'r.2 = (j : Nat) then 1 else 0  -- gather pick matrix
+private def oneHotRows {rows : Nat} (ids : Array Nat) : Matrix (Fin ids.size) (Fin rows) ℝ := Matrix.of fun r j => if ids[r.1]'r.2 = (j : Nat) then 1 else 0  -- gather pick matrix
 private def toMat {K : Type} [Inhabited K] (a : Array K) (rows : Nat) (cols : Nat) : Matrix (Fin rows) (Fin cols) K := Matrix.of fun i j => a[i.1 * cols + j.1]!  -- reshape flat array
 -- nonlinear ops: prove the backward rule equals the real derivative (Mathlib calculus), since the adjoint
 -- identity is not the gradient here. foundation: `∂ lse / ∂z_i = softmax_i`.
@@ -114,31 +114,41 @@ private noncomputable def softmaxReal {c : Nat} (z : Fin c → ℝ) (i : Fin c) 
 private noncomputable def ceLoss {c : Nat} (z : Fin c → ℝ) (t : Fin c) : ℝ := lse z - z t
 
 -- add's backward sends the cotangent unchanged to both summands
-theorem add_adjoint {n : Nat} {m : Nat} (A : Matrix (Fin n) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * (A + B)) = Matrix.trace (Gᵀ * A) + Matrix.trace (Gᵀ * B) := by rw [Matrix.mul_add, Matrix.trace_add]
+theorem add_adjoint {n : Nat} {m : Nat} (A : Matrix (Fin n) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ)
+    : Matrix.trace (Gᵀ * (A + B)) = Matrix.trace (Gᵀ * A) + Matrix.trace (Gᵀ * B) := by rw [Matrix.mul_add, Matrix.trace_add]
 -- `G ↦ G·Wᵀ` is the adjoint of `X ↦ X·W`
-theorem matmulBwdX_adjoint {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * (X * W)) = Matrix.trace ((G * Wᵀ)ᵀ * X) := by rw [Matrix.transpose_mul, Matrix.transpose_transpose, ← Matrix.mul_assoc, Matrix.trace_mul_comm, ← Matrix.mul_assoc]
+theorem matmulBwdX_adjoint {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ)
+    : Matrix.trace (Gᵀ * (X * W)) = Matrix.trace ((G * Wᵀ)ᵀ * X) := by rw [Matrix.transpose_mul, Matrix.transpose_transpose, ← Matrix.mul_assoc, Matrix.trace_mul_comm, ← Matrix.mul_assoc]
 -- `G ↦ Xᵀ·G` is the adjoint of `W ↦ X·W`
-theorem matmulBwdW_adjoint {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * (X * W)) = Matrix.trace ((Xᵀ * G)ᵀ * W) := by rw [Matrix.transpose_mul, Matrix.transpose_transpose, Matrix.mul_assoc]
+theorem matmulBwdW_adjoint {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ)
+    : Matrix.trace (Gᵀ * (X * W)) = Matrix.trace ((Xᵀ * G)ᵀ * W) := by rw [Matrix.transpose_mul, Matrix.transpose_transpose, Matrix.mul_assoc]
 -- transpose is its own adjoint
-theorem transposeFlat_adjoint {n : Nat} {m : Nat} (X : Matrix (Fin m) (Fin n) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * Xᵀ) = Matrix.trace (Gᵀᵀ * X) := by rw [Matrix.transpose_transpose, ← Matrix.transpose_mul, Matrix.trace_transpose, Matrix.trace_mul_comm]
--- gather's adjoint is scatter, left-multiplication by the 0/1 selection matrix
-theorem gather_adjoint {rows : Nat} {cols : Nat} (ids : Array Nat) (table : Matrix (Fin rows) (Fin cols) ℝ) (G : Matrix (Fin ids.size) (Fin cols) ℝ) : Matrix.trace (Gᵀ * (selection (rows := rows) ids * table)) = Matrix.trace (((selection (rows := rows) ids)ᵀ * G)ᵀ * table) := matmulBwdW_adjoint (selection (rows := rows) ids) table G
+theorem transposeFlat_adjoint {n : Nat} {m : Nat} (X : Matrix (Fin m) (Fin n) ℝ) (G : Matrix (Fin n) (Fin m) ℝ)
+    : Matrix.trace (Gᵀ * Xᵀ) = Matrix.trace (Gᵀᵀ * X) := by rw [Matrix.transpose_transpose, ← Matrix.transpose_mul, Matrix.trace_transpose, Matrix.trace_mul_comm]
+-- gather's adjoint is scatter, left-multiplication by the 0/1 one-hot matrix
+theorem gather_adjoint {rows : Nat} {cols : Nat} (ids : Array Nat) (table : Matrix (Fin rows) (Fin cols) ℝ) (G : Matrix (Fin ids.size) (Fin cols) ℝ)
+    : Matrix.trace (Gᵀ * (oneHotRows (rows := rows) ids * table)) = Matrix.trace (((oneHotRows (rows := rows) ids)ᵀ * G)ᵀ * table) := matmulBwdW_adjoint (oneHotRows (rows := rows) ids) table G
 -- the scattered entry sums the gradients of all rows that selected it
-theorem scatter_apply {rows : Nat} {cols : Nat} (ids : Array Nat) (G : Matrix (Fin ids.size) (Fin cols) ℝ) (j : Fin rows) (c : Fin cols) : ((selection (rows := rows) ids)ᵀ * G) j c = ∑ r : Fin ids.size, (if ids[r.1]'r.2 = (j : Nat) then G r c else 0) := by simp [selection, Matrix.mul_apply, Matrix.transpose_apply, Matrix.of_apply]
+theorem scatter_apply {rows : Nat} {cols : Nat} (ids : Array Nat) (G : Matrix (Fin ids.size) (Fin cols) ℝ) (j : Fin rows) (c : Fin cols)
+    : ((oneHotRows (rows := rows) ids)ᵀ * G) j c = ∑ r : Fin ids.size, (if ids[r.1]'r.2 = (j : Nat) then G r c else 0) := by simp [oneHotRows, Matrix.mul_apply, Matrix.transpose_apply, Matrix.of_apply]
 -- gradient of a linear layer `⟪T, X·W+B⟫`: `dW = Xᵀ·T`, `dB = T`
-theorem linearLayer_grad {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (T : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Tᵀ * (X * W + B)) = Matrix.trace ((Xᵀ * T)ᵀ * W) + Matrix.trace (Tᵀ * B) := by rw [add_adjoint, matmulBwdW_adjoint]
+theorem linearLayer_grad {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (T : Matrix (Fin n) (Fin m) ℝ)
+    : Matrix.trace (Tᵀ * (X * W + B)) = Matrix.trace ((Xᵀ * T)ᵀ * W) + Matrix.trace (Tᵀ * B) := by rw [add_adjoint, matmulBwdW_adjoint]
 
 -- the float left-fold equals the mathematical `Finset.sum`
-theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K) : (Array.range n).foldl (fun s i => s + f i) 0 = ∑ i ∈ Finset.range n, f i := by
+theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K)
+    : (Array.range n).foldl (fun s i => s + f i) 0 = ∑ i ∈ Finset.range n, f i := by
   induction n with
   | zero => rfl
   | succ n ih => rw [Array.range_succ, Array.foldl_append, ih, Finset.sum_range_succ]; simp
 
 -- a row-major index `a*q+b` stays in bounds (`< p*q`)
-theorem idx_bound (a : Nat) (b : Nat) (p : Nat) (q : Nat) (ha : a < p) (hb : b < q) : a * q + b < p * q := by nlinarith
+theorem idx_bound (a : Nat) (b : Nat) (p : Nat) (q : Nat) (ha : a < p) (hb : b < q)
+    : a * q + b < p * q := by nlinarith
 
 -- the flat `matmulFwd` kernel equals real `Matrix.mul`
-theorem matmulFwd_bridge {K : Type} [CommRing K] [Inhabited K] (x : Array K) (W : Array K) (n : Nat) (k : Nat) (m : Nat) : toMat (matmulFwd x n k W m) n m = toMat x n k * toMat W k m := by
+theorem matmulFwd_bridge {K : Type} [CommRing K] [Inhabited K] (x : Array K) (W : Array K) (n : Nat) (k : Nat) (m : Nat)
+    : toMat (matmulFwd x n k W m) n m = toMat x n k * toMat W k m := by
   ext i j
   rw [Matrix.mul_apply]
   simp only [toMat, Matrix.of_apply]
@@ -150,7 +160,8 @@ theorem matmulFwd_bridge {K : Type} [CommRing K] [Inhabited K] (x : Array K) (W 
   rw [foldl_range_sum, Fin.sum_univ_eq_sum_range (fun p => x[i.1 * k + p]! * W[p * m + j.1]!) k]
 
 -- `matmulBwdX` equals `dout · Wᵀ` as matrices
-theorem matmulBwdX_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K) (W : Array K) (n : Nat) (m : Nat) (k : Nat) : toMat (matmulBwdX dout n m W k) n k = toMat dout n m * (toMat W k m)ᵀ := by
+theorem matmulBwdX_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K) (W : Array K) (n : Nat) (m : Nat) (k : Nat)
+    : toMat (matmulBwdX dout n m W k) n k = toMat dout n m * (toMat W k m)ᵀ := by
   ext i kk
   rw [Matrix.mul_apply]
   simp only [toMat, Matrix.of_apply, Matrix.transpose_apply]
@@ -162,7 +173,8 @@ theorem matmulBwdX_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K)
   rw [foldl_range_sum, Fin.sum_univ_eq_sum_range (fun p => dout[i.1 * m + p]! * W[kk.1 * m + p]!) m]
 
 -- `matmulBwdW` equals `Xᵀ · dout` as matrices
-theorem matmulBwdW_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K) (x : Array K) (n : Nat) (m : Nat) (k : Nat) : toMat (matmulBwdW dout n m x k) k m = (toMat x n k)ᵀ * toMat dout n m := by
+theorem matmulBwdW_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K) (x : Array K) (n : Nat) (m : Nat) (k : Nat)
+    : toMat (matmulBwdW dout n m x k) k m = (toMat x n k)ᵀ * toMat dout n m := by
   ext kk j
   rw [Matrix.mul_apply]
   simp only [toMat, Matrix.of_apply, Matrix.transpose_apply]
@@ -174,21 +186,26 @@ theorem matmulBwdW_bridge {K : Type} [CommRing K] [Inhabited K] (dout : Array K)
   rw [foldl_range_sum, Fin.sum_univ_eq_sum_range (fun p => x[p * k + kk.1]! * dout[p * m + j.1]!) n]
 
 -- `maddFlat` equals matrix addition
-theorem maddFlat_bridge {K : Type} [CommRing K] [Inhabited K] (a : Array K) (b : Array K) (rows : Nat) (cols : Nat) (ha : a.size = rows * cols) : toMat (maddFlat a b) rows cols = toMat a rows cols + toMat b rows cols := by
+theorem maddFlat_bridge {K : Type} [CommRing K] [Inhabited K] (a : Array K) (b : Array K) (rows : Nat) (cols : Nat) (ha : a.size = rows * cols)
+    : toMat (maddFlat a b) rows cols = toMat a rows cols + toMat b rows cols := by
   ext i j
   simp only [toMat, Matrix.of_apply, Matrix.add_apply]
   have hb : i.1 * cols + j.1 < a.size := by rw [ha]; exact idx_bound i.1 j.1 rows cols i.2 j.2
   rw [maddFlat, map_range_getElem! _ _ _ hb]
 
 -- the `bwdW` kernel is the adjoint (gradient) of the forward kernel
-theorem matmulBwdW_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ) (n : Nat) (k : Nat) (m : Nat) : Matrix.trace ((toMat gArr n m)ᵀ * toMat (matmulFwd x n k W m) n m) = Matrix.trace ((toMat (matmulBwdW gArr n m x k) k m)ᵀ * toMat W k m) := by rw [matmulFwd_bridge, matmulBwdW_bridge, matmulBwdW_adjoint]
+theorem matmulBwdW_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ) (n : Nat) (k : Nat) (m : Nat)
+    : Matrix.trace ((toMat gArr n m)ᵀ * toMat (matmulFwd x n k W m) n m) = Matrix.trace ((toMat (matmulBwdW gArr n m x k) k m)ᵀ * toMat W k m) := by rw [matmulFwd_bridge, matmulBwdW_bridge, matmulBwdW_adjoint]
 -- the `bwdX` kernel is the adjoint (gradient) of the forward kernel
-theorem matmulBwdX_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ) (n : Nat) (k : Nat) (m : Nat) : Matrix.trace ((toMat gArr n m)ᵀ * toMat (matmulFwd x n k W m) n m) = Matrix.trace ((toMat (matmulBwdX gArr n m W k) n k)ᵀ * toMat x n k) := by rw [matmulFwd_bridge, matmulBwdX_bridge, matmulBwdX_adjoint]
+theorem matmulBwdX_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ) (n : Nat) (k : Nat) (m : Nat)
+    : Matrix.trace ((toMat gArr n m)ᵀ * toMat (matmulFwd x n k W m) n m) = Matrix.trace ((toMat (matmulBwdX gArr n m W k) n k)ᵀ * toMat x n k) := by rw [matmulFwd_bridge, matmulBwdX_bridge, matmulBwdX_adjoint]
 -- add's gradient splits unchanged to both inputs
-theorem maddFlat_kernel_grad (a : Array ℝ) (b : Array ℝ) (gArr : Array ℝ) (rows : Nat) (cols : Nat) (ha : a.size = rows * cols) : Matrix.trace ((toMat gArr rows cols)ᵀ * toMat (maddFlat a b) rows cols) = Matrix.trace ((toMat gArr rows cols)ᵀ * toMat a rows cols) + Matrix.trace ((toMat gArr rows cols)ᵀ * toMat b rows cols) := by rw [maddFlat_bridge a b rows cols ha, add_adjoint]
+theorem maddFlat_kernel_grad (a : Array ℝ) (b : Array ℝ) (gArr : Array ℝ) (rows : Nat) (cols : Nat) (ha : a.size = rows * cols)
+    : Matrix.trace ((toMat gArr rows cols)ᵀ * toMat (maddFlat a b) rows cols) = Matrix.trace ((toMat gArr rows cols)ᵀ * toMat a rows cols) + Matrix.trace ((toMat gArr rows cols)ᵀ * toMat b rows cols) := by rw [maddFlat_bridge a b rows cols ha, add_adjoint]
 
 -- `∂/∂zᵢ Σⱼ exp(zⱼ) = exp(zᵢ)`
-theorem exp_sum_partial {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt (fun t => ∑ j, Real.exp (Function.update z i t j)) (Real.exp (z i)) (z i) := by
+theorem exp_sum_partial {c : Nat} (z : Fin c → ℝ) (i : Fin c)
+    : HasDerivAt (fun t => ∑ j, Real.exp (Function.update z i t j)) (Real.exp (z i)) (z i) := by
   have hfun : (fun t : ℝ => ∑ j, Real.exp (Function.update z i t j)) = ∑ j : Fin c, (fun t : ℝ => Real.exp (Function.update z i t j)) := by funext t; rw [Finset.sum_apply]
   rw [hfun, show Real.exp (z i) = ∑ j : Fin c, (if j = i then Real.exp (z i) else 0) by rw [Finset.sum_ite_eq' Finset.univ i (fun _ => Real.exp (z i)), if_pos (Finset.mem_univ i)]]
   apply HasDerivAt.sum
@@ -203,7 +220,8 @@ theorem exp_sum_partial {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt (
     rw [e]; exact hasDerivAt_const (z i) (Real.exp (z j))
 
 -- `∂(log-sum-exp)/∂zᵢ = softmaxᵢ`
-theorem lse_partial_deriv {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt (fun t => lse (Function.update z i t)) (softmaxReal z i) (z i) := by
+theorem lse_partial_deriv {c : Nat} (z : Fin c → ℝ) (i : Fin c)
+    : HasDerivAt (fun t => lse (Function.update z i t)) (softmaxReal z i) (z i) := by
   have hpos : (0 : ℝ) < ∑ j, Real.exp (z j) := Finset.sum_pos (fun j _ => Real.exp_pos _) ⟨i, Finset.mem_univ i⟩
   have hne : (fun t => ∑ j, Real.exp (Function.update z i t j)) (z i) ≠ 0 := by simp only [Function.update_eq_self]; exact ne_of_gt hpos
   have hlog := (exp_sum_partial z i).log hne
@@ -211,7 +229,8 @@ theorem lse_partial_deriv {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt
   exact hlog
 
 -- `∂(cross-entropy)/∂zᵢ = softmaxᵢ − [i=t]` (probs − onehot)
-theorem ce_partial_deriv {c : Nat} (z : Fin c → ℝ) (t : Fin c) (i : Fin c) : HasDerivAt (fun s => ceLoss (Function.update z i s) t) (softmaxReal z i - (if i = t then 1 else 0)) (z i) := by
+theorem ce_partial_deriv {c : Nat} (z : Fin c → ℝ) (t : Fin c) (i : Fin c)
+    : HasDerivAt (fun s => ceLoss (Function.update z i s) t) (softmaxReal z i - (if i = t then 1 else 0)) (z i) := by
   have hupd : HasDerivAt (fun s => (Function.update z i s) t) (if i = t then 1 else 0) (z i) := by
     by_cases h : i = t
     · subst h; simp only [Function.update_self]; exact hasDerivAt_id (z i)
@@ -221,7 +240,8 @@ theorem ce_partial_deriv {c : Nat} (z : Fin c → ℝ) (t : Fin c) (i : Fin c) :
   exact (lse_partial_deriv z i).sub hupd
 
 -- chaining the affine logit map into CE gives `d/dw = (softmaxᵢ − [i=t])·a`
-theorem layer_ce_chain {c : Nat} (zbase : Fin c → ℝ) (t : Fin c) (i : Fin c) (a : ℝ) (b : ℝ) (w : ℝ) : HasDerivAt (fun w => ceLoss (Function.update zbase i (a * w + b)) t) ((softmaxReal (Function.update zbase i (a * w + b)) i - (if i = t then 1 else 0)) * a) w := by
+theorem layer_ce_chain {c : Nat} (zbase : Fin c → ℝ) (t : Fin c) (i : Fin c) (a : ℝ) (b : ℝ) (w : ℝ)
+    : HasDerivAt (fun w => ceLoss (Function.update zbase i (a * w + b)) t) ((softmaxReal (Function.update zbase i (a * w + b)) i - (if i = t then 1 else 0)) * a) w := by
   have hg : HasDerivAt (fun s => ceLoss (Function.update zbase i s) t) (softmaxReal (Function.update zbase i (a * w + b)) i - (if i = t then 1 else 0)) (a * w + b) := by
     simpa [Function.update_idem, Function.update_self] using ce_partial_deriv (Function.update zbase i (a * w + b)) t i
   have hh : HasDerivAt (fun w : ℝ => a * w + b) a w := by simpa using ((hasDerivAt_id w).const_mul a).add_const b
@@ -341,15 +361,18 @@ def backward (loss : Tensor) : Array (Nat × Array Float) :=
   loss.backwardAcc #[1.0] #[]
 
 -- adding an unseen id appends a new entry
-theorem gradientMapAdd_fresh (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (h : gm.findIdx? (fun (i, _) => i = id) = none) : gradientMapAdd gm id g = gm.push (id, g) := by unfold gradientMapAdd; rw [h]
+theorem gradientMapAdd_fresh (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (h : gm.findIdx? (fun (i, _) => i = id) = none)
+    : gradientMapAdd gm id g = gm.push (id, g) := by unfold gradientMapAdd; rw [h]
 
 -- adding the same id twice sums the two gradients
-theorem gradientMapAdd_shared (id : Nat) (g : Array Float) (g' : Array Float) : gradientMapAdd (gradientMapAdd #[] id g) id g' = #[(id, maddFlat g g')] := by
+theorem gradientMapAdd_shared (id : Nat) (g : Array Float) (g' : Array Float)
+    : gradientMapAdd (gradientMapAdd #[] id g) id g' = #[(id, maddFlat g g')] := by
   have h0 : gradientMapAdd #[] id g = #[(id, g)] := by unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
   rw [h0]; unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
 
 -- after adding an id, an entry for it exists
-theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : ∃ p ∈ (gradientMapAdd gm id g), p.1 = id := by
+theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float)
+    : ∃ p ∈ (gradientMapAdd gm id g), p.1 = id := by
   unfold gradientMapAdd
   split
   case h_1 i h =>
@@ -358,7 +381,8 @@ theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Arr
   case h_2 h => exact ⟨(id, g), by simp, rfl⟩
 
 -- adding a gradient never drops an id already present
-theorem gradientMapAdd_pres_ids (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ gm, p.1 = j) : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j := by
+theorem gradientMapAdd_pres_ids (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ gm, p.1 = j)
+    : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j := by
   obtain ⟨p, hp, hpj⟩ := hj
   rw [Array.mem_iff_getElem] at hp
   obtain ⟨k, hk, hkp⟩ := hp
@@ -379,7 +403,8 @@ theorem gradientMapAdd_pres_ids (gm : Array (Nat × Array Float)) (id : Nat) (g 
       rw [Array.getElem_setIfInBounds_ne hk hik, hkp]
 
 -- every id after an add is the new id or one already present (no spurious ids)
-theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j) : j = id ∨ ∃ p ∈ gm, p.1 = j := by
+theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j)
+    : j = id ∨ ∃ p ∈ gm, p.1 = j := by
   obtain ⟨p, hp, hpj⟩ := hj
   unfold gradientMapAdd at hp
   split at hp
