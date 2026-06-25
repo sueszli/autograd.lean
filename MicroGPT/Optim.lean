@@ -21,7 +21,7 @@ def zeroMoments (p : Params) : Array (Nat × Array Float) × Array (Nat × Array
   let entries := leaves.map fun t => (t.id, zerosLike t)
   (entries, entries)
 
-def adamWStep (step : Nat) (p : Params) (m v : Array (Nat × Array Float)) (gradientMap : Array (Nat × Array Float)) (numSteps : Nat) (lr0 : Float := 0.01) : Params × Array (Nat × Array Float) × Array (Nat × Array Float) :=
+def adamWStep (step : Nat) (p : Params) (m v : Array (Nat × Array Float)) (gradientMap : Array (Nat × Array Float)) (numSteps : Nat := 1000) (lr0 : Float := 0.01) : Params × Array (Nat × Array Float) × Array (Nat × Array Float) :=
   let progress : Float := if numSteps = 0 then 0.0 else (step - 1).toFloat / numSteps.toFloat
   let lrRaw := lr0 * (1.0 - progress)
   let lr := if lrRaw < 0.0 then 0.0 else lrRaw

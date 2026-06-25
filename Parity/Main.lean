@@ -159,7 +159,7 @@ def main : IO Unit := do
   let stdout ← IO.getStdout
   for step in [0:numSteps] do
     let lossT := forward p inputs[step]! targets[step]! masks[step]! nEmbed nHead
-    let (p', m', v') := adamWStep (step + 1) p m v lossT.backward numSteps
+    let (p', m', v') := adamWStep (step + 1) p m v lossT.backward
     p := p'; m := m'; v := v'
     let elapsed := (← IO.monoMsNow) - startMs
     IO.print s!"\r{progressBar (step + 1) numSteps elapsed}  "
