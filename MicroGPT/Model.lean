@@ -66,23 +66,6 @@ def mlpFc1 (h : Nat) : Nat := blockBase h + 4
 def mlpFc2 (h : Nat) : Nat := blockBase h + 5
 end ParamIds
 
--- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
-theorem block_ids_increasing (h : Nat) : ParamIds.attnWq h < ParamIds.attnWk h ∧ ParamIds.attnWk h < ParamIds.attnWv h ∧ ParamIds.attnWv h < ParamIds.attnWo h ∧ ParamIds.attnWo h < ParamIds.mlpFc1 h ∧ ParamIds.mlpFc1 h < ParamIds.mlpFc2 h := by unfold ParamIds.attnWq ParamIds.attnWk ParamIds.attnWv ParamIds.attnWo ParamIds.mlpFc1 ParamIds.mlpFc2 ParamIds.blockBase; omega
-theorem blocks_disjoint (h : Nat) : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) := by unfold ParamIds.mlpFc2 ParamIds.attnWq ParamIds.blockBase; omega
-theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
-
--- tests
-theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
-theorem global_ids : ParamIds.wte = 0 ∧ ParamIds.wpe = 1 ∧ ParamIds.lmHead = 2 := ⟨rfl, rfl, rfl⟩
-theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩
-theorem block1_ids : ParamIds.blockBase 1 = 9 ∧ ParamIds.attnWq 1 = 9 := ⟨rfl, rfl⟩
-
-/-!
-===--------------------------------------------------------------------------===
-Parameter id injectivity
-===--------------------------------------------------------------------------===
--/
-
 inductive Role where
   | attnWq | attnWk | attnWv | attnWo | mlpFc1 | mlpFc2
   deriving DecidableEq
@@ -108,8 +91,18 @@ private def Slot.id : Slot → Nat
   | .lmHead => ParamIds.lmHead
   | .block h r => ParamIds.blockBase h + r.offset
 
-theorem Role.offset_lt (r : Role) : r.offset < 6 := by cases r <;> decide
+private def ParamIds.blockIds (h : Nat) : List Nat :=
+  [ParamIds.attnWq h, ParamIds.attnWk h, ParamIds.attnWv h, ParamIds.attnWo h, ParamIds.mlpFc1 h, ParamIds.mlpFc2 h]
 
+private def ParamIds.allIds : Nat → List Nat
+  | 0 => [ParamIds.wte, ParamIds.wpe, ParamIds.lmHead]
+  | n + 1 => ParamIds.allIds n ++ ParamIds.blockIds n
+
+-- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
+theorem block_ids_increasing (h : Nat) : ParamIds.attnWq h < ParamIds.attnWk h ∧ ParamIds.attnWk h < ParamIds.attnWv h ∧ ParamIds.attnWv h < ParamIds.attnWo h ∧ ParamIds.attnWo h < ParamIds.mlpFc1 h ∧ ParamIds.mlpFc1 h < ParamIds.mlpFc2 h := by unfold ParamIds.attnWq ParamIds.attnWk ParamIds.attnWv ParamIds.attnWo ParamIds.mlpFc1 ParamIds.mlpFc2 ParamIds.blockBase; omega
+theorem blocks_disjoint (h : Nat) : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) := by unfold ParamIds.mlpFc2 ParamIds.attnWq ParamIds.blockBase; omega
+theorem globals_precede_blocks : ParamIds.lmHead < ParamIds.attnWq 0 := by unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
+theorem Role.offset_lt (r : Role) : r.offset < 6 := by cases r <;> decide
 theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset) : r = r' := by cases r <;> cases r' <;> simp_all [Role.offset]
 
 theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id) : s = t := by
@@ -137,13 +130,6 @@ theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h 
     simp only [Slot.id, ParamIds.blockBase]
     omega
 
-private def ParamIds.blockIds (h : Nat) : List Nat :=
-  [ParamIds.attnWq h, ParamIds.attnWk h, ParamIds.attnWv h, ParamIds.attnWo h, ParamIds.mlpFc1 h, ParamIds.mlpFc2 h]
-
-private def ParamIds.allIds : Nat → List Nat
-  | 0 => [ParamIds.wte, ParamIds.wpe, ParamIds.lmHead]
-  | n + 1 => ParamIds.allIds n ++ ParamIds.blockIds n
-
 theorem rangeAddSix (m : Nat) : List.range (m + 6) = List.range m ++ [m, m + 1, m + 2, m + 3, m + 4, m + 5] := by rw [List.range_add]; rfl
 
 theorem ParamIds.allIds_eq_range (n : Nat) : ParamIds.allIds n = List.range (3 + 6 * n) := by
@@ -164,6 +150,12 @@ theorem ParamIds.allIds_eq_range (n : Nat) : ParamIds.allIds n = List.range (3 +
     rw [h0, h1, h2, h3, h4, h5]
 
 theorem ParamIds.allIds_nodup (n : Nat) : (ParamIds.allIds n).Nodup := by rw [ParamIds.allIds_eq_range]; exact List.nodup_range
+
+-- tests
+theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
+theorem global_ids : ParamIds.wte = 0 ∧ ParamIds.wpe = 1 ∧ ParamIds.lmHead = 2 := ⟨rfl, rfl, rfl⟩
+theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩
+theorem block1_ids : ParamIds.blockBase 1 = 9 ∧ ParamIds.attnWq 1 = 9 := ⟨rfl, rfl⟩
 
 /-!
 ===--------------------------------------------------------------------------===
