@@ -105,6 +105,10 @@ def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tens
   let l := maskedCrossEntropy probs logits.rows logits.cols targets mask sumMask
   { data := #[l], shape := #[1, 1], id := 0, requiresGrad := logits.requiresGrad, gradFn := .lossOp logits probs targets mask sumMask }
 
+-- matrix bridges for the proofs below: `selection` is the gather pick matrix, `toMat` reshapes a flat array
+private def selection {rows : Nat} (ids : Array Nat) : Matrix (Fin ids.size) (Fin rows) ℝ := Matrix.of fun r j => if ids[r.1]'r.2 = (j : Nat) then 1 else 0
+private def toMat {K : Type} [Inhabited K] (a : Array K) (rows : Nat) (cols : Nat) : Matrix (Fin rows) (Fin cols) K := Matrix.of fun i j => a[i.1 * cols + j.1]!
+
 -- adjoint identities
 theorem add_adjoint {n : Nat} {m : Nat} (A : Matrix (Fin n) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * (A + B)) = Matrix.trace (Gᵀ * A) + Matrix.trace (Gᵀ * B) := by rw [Matrix.mul_add, Matrix.trace_add]
 
@@ -114,16 +118,11 @@ theorem matmulBwdW_adjoint {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fi
 
 theorem transposeFlat_adjoint {n : Nat} {m : Nat} (X : Matrix (Fin m) (Fin n) ℝ) (G : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Gᵀ * Xᵀ) = Matrix.trace (Gᵀᵀ * X) := by rw [Matrix.transpose_transpose, ← Matrix.transpose_mul, Matrix.trace_transpose, Matrix.trace_mul_comm]
 
-private def selection {rows : Nat} (ids : Array Nat) : Matrix (Fin ids.size) (Fin rows) ℝ := Matrix.of fun r j => if ids[r.1]'r.2 = (j : Nat) then 1 else 0
-
 theorem gather_adjoint {rows : Nat} {cols : Nat} (ids : Array Nat) (table : Matrix (Fin rows) (Fin cols) ℝ) (G : Matrix (Fin ids.size) (Fin cols) ℝ) : Matrix.trace (Gᵀ * (selection (rows := rows) ids * table)) = Matrix.trace (((selection (rows := rows) ids)ᵀ * G)ᵀ * table) := matmulBwdW_adjoint (selection (rows := rows) ids) table G
 
 theorem scatter_apply {rows : Nat} {cols : Nat} (ids : Array Nat) (G : Matrix (Fin ids.size) (Fin cols) ℝ) (j : Fin rows) (c : Fin cols) : ((selection (rows := rows) ids)ᵀ * G) j c = ∑ r : Fin ids.size, (if ids[r.1]'r.2 = (j : Nat) then G r c else 0) := by simp [selection, Matrix.mul_apply, Matrix.transpose_apply, Matrix.of_apply]
 
 theorem linearLayer_grad {n : Nat} {k : Nat} {m : Nat} (X : Matrix (Fin n) (Fin k) ℝ) (W : Matrix (Fin k) (Fin m) ℝ) (B : Matrix (Fin n) (Fin m) ℝ) (T : Matrix (Fin n) (Fin m) ℝ) : Matrix.trace (Tᵀ * (X * W + B)) = Matrix.trace ((Xᵀ * T)ᵀ * W) + Matrix.trace (Tᵀ * B) := by rw [add_adjoint, matmulBwdW_adjoint]
-
--- bridges: flat kernels = matrix ops
-private def toMat {K : Type} [Inhabited K] (a : Array K) (rows : Nat) (cols : Nat) : Matrix (Fin rows) (Fin cols) K := Matrix.of fun i j => a[i.1 * cols + j.1]!
 
 theorem foldl_range_sum {K : Type} [AddCommMonoid K] (n : Nat) (f : Nat → K) : (Array.range n).foldl (fun s i => s + f i) 0 = ∑ i ∈ Finset.range n, f i := by
   induction n with
@@ -189,6 +188,7 @@ theorem maddFlat_kernel_grad (a : Array ℝ) (b : Array ℝ) (gArr : Array ℝ) 
 -- identity is not the gradient here. foundation: `∂ lse / ∂z_i = softmax_i`.
 private noncomputable def lse {c : Nat} (z : Fin c → ℝ) : ℝ := Real.log (∑ j, Real.exp (z j))
 private noncomputable def softmaxReal {c : Nat} (z : Fin c → ℝ) (i : Fin c) : ℝ := Real.exp (z i) / ∑ j, Real.exp (z j)
+private noncomputable def ceLoss {c : Nat} (z : Fin c → ℝ) (t : Fin c) : ℝ := lse z - z t
 
 theorem exp_sum_partial {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt (fun t => ∑ j, Real.exp (Function.update z i t j)) (Real.exp (z i)) (z i) := by
   have hfun : (fun t : ℝ => ∑ j, Real.exp (Function.update z i t j)) = ∑ j : Fin c, (fun t : ℝ => Real.exp (Function.update z i t j)) := by funext t; rw [Finset.sum_apply]
@@ -210,8 +210,6 @@ theorem lse_partial_deriv {c : Nat} (z : Fin c → ℝ) (i : Fin c) : HasDerivAt
   have hlog := (exp_sum_partial z i).log hne
   simp only [Function.update_eq_self] at hlog
   exact hlog
-
-private noncomputable def ceLoss {c : Nat} (z : Fin c → ℝ) (t : Fin c) : ℝ := lse z - z t
 
 theorem ce_partial_deriv {c : Nat} (z : Fin c → ℝ) (t : Fin c) (i : Fin c) : HasDerivAt (fun s => ceLoss (Function.update z i s) t) (softmaxReal z i - (if i = t then 1 else 0)) (z i) := by
   have hupd : HasDerivAt (fun s => (Function.update z i s) t) (if i = t then 1 else 0) (z i) := by
