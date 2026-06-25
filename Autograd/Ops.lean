@@ -77,6 +77,7 @@ def maddFlat {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : Arra
 private def reluFlat (x : Array Float) : Array Float :=
   x.map fun z => if z > 0.0 then z else 0.0
 
+-- gradient passes through where the pre-activation was positive, else zero
 private def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
 
@@ -112,6 +113,7 @@ def softmaxRows (x : Array Float) (rows cols : Nat) : Array Float :=
       for j in [0:cols] do out := out.set! (i * cols + j) sm[j]!
     return out
 
+-- gradient through row-wise softmax: subtract the row's common-mode, then scale by the probabilities
 private def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Float) : Array Float :=
   Id.run do
     let mut out : Array Float := Array.replicate (rows * cols) 0.0
@@ -123,11 +125,13 @@ private def softmaxRowsBwd (aw daw : Array Float) (rows cols : Nat) (scale : Flo
         out := out.set! (i * cols + j) g
     return out
 
+-- a fold of size-preserving steps keeps the starting array's size (loop-kernel size bookkeeping)
 theorem foldl_size_pres {α : Type} {K : Type} (l : List α) (init : Array K) (f : Array K → α → Array K) (hf : ∀ b a, (f b a).size = b.size) : (l.foldl f init).size = init.size := by
   induction l generalizing init with
   | nil => rfl
   | cons x xs ih => rw [List.foldl_cons, ih, hf]
 
+-- a replicate-then-set in nested loops keeps the original size (loop-kernel size bookkeeping)
 theorem replicate_loop2_size {α : Type} {β : Type} {K : Type} (outer : List α) (inner : α → List β) (n : Nat) (v : K) (g : Array K → α → β → Nat) (h : Array K → α → β → K) : (outer.foldl (fun b a => (inner a).foldl (fun b' c => b'.setIfInBounds (g b' a c) (h b' a c)) b) (Array.replicate n v)).size = n := (foldl_size_pres _ _ _ (fun _ _ => foldl_size_pres _ _ _ (fun _ _ => Array.size_setIfInBounds ..))).trans (Array.size_replicate ..)
 
 -- tests
@@ -180,6 +184,7 @@ Embedding scatter
 def gatherFlat {K : Type} [Inhabited K] (table : Array K) (cols : Nat) (ids : Array Nat) : Array K :=
   (Array.range (ids.size * cols)).map fun k => table[ids[k / cols]! * cols + k % cols]!
 
+-- adjoint of gather: scatter-add each gradient row back onto the table row it was read from
 def scatterAddFlat {K : Type} [Add K] [Zero K] [Inhabited K] (rows : Nat) (cols : Nat) (grad : Array K) (ids : Array Nat) : Array K :=
   Id.run do
     let mut out : Array K := Array.replicate (rows * cols) (0 : K)
@@ -189,8 +194,10 @@ def scatterAddFlat {K : Type} [Add K] [Zero K] [Inhabited K] (rows : Nat) (cols 
         out := out.set! (id * cols + j) (out[id * cols + j]! + grad[i * cols + j]!)
     return out
 
+-- the k-th entry of `Array.range n` is `k`
 theorem nat_range_getElem! (n : Nat) (i : Nat) (hi : i < n) : (Array.range n)[i]! = i := by rw [getElem!_pos _ i (by simp [hi]), Array.getElem_range]
 
+-- output row `row` is input row `ids[row]` (gather copies the selected rows)
 theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row : Nat) (col : Nat) (hrow : row < ids.size) (hcol : col < cols) : (gatherFlat table cols ids)[row * cols + col]! = table[ids[row]! * cols + col]! := by
   have hbound : row * cols + col < ids.size * cols := by
     have h2 : row * cols + cols = (row + 1) * cols := by rw [Nat.add_mul, Nat.one_mul]
@@ -200,6 +207,7 @@ theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (row * cols + col) % cols = col by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hcol], show (row * cols + col) / cols = row by rw [Nat.mul_comm row cols, Nat.mul_add_div (Nat.lt_of_le_of_lt (Nat.zero_le col) hcol), Nat.div_eq_of_lt hcol, Nat.add_zero]]
 
+-- gathering with identity indices `[0,1,…]` returns the table unchanged
 theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h : table.size = rows * cols) : gatherFlat table cols (Array.range rows) = table := by
   apply Array.ext
   · simp [gatherFlat, h]
@@ -233,6 +241,7 @@ def maskedCrossEntropy (probs : Array Float) (rows cols : Nat) (targetIds : Arra
     acc - mask[i]! * Float.log pClamp
   if sumMask == 0.0 then 0.0 else (1.0 / sumMask) * total
 
+-- gradient `probs - onehot`, masked per row and averaged by the mask weight
 def maskedCrossEntropyBwd (probs : Array Float) (rows cols : Nat) (targetIds : Array Nat) (mask : Array Float) (sumMask : Float) : Array Float :=
   let inv := if sumMask == 0.0 then 0.0 else 1.0 / sumMask
   Id.run do
@@ -275,6 +284,7 @@ def rmsnormFwd (x : Array Float) (rows cols : Nat) (eps : Float) : Array Float �
     return out
   (y, scales)
 
+-- gradient through RMS-norm: scaled input minus its projection onto the normalized direction
 def rmsnormBwd (dy x : Array Float) (scale : Array Float) (rows cols : Nat) : Array Float :=
   let dF := cols.toFloat
   Id.run do
@@ -349,6 +359,7 @@ def attnFwd (nEmbed nHead : Nat) (xPre : Array Float) (rows : Nat) (wq wk wv wo 
   let outRes := maddFlat xPre outFlat
   (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
 
+-- backward of the attention block: returns the input gradient plus the q/k/v/o weight grads
 def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
   let cols := nEmbed
   let dMerged := matmulBwdX dout rows cols wo cols
@@ -430,6 +441,7 @@ def mlpFwd (nEmbed : Nat) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Flo
   let y := matmulFwd h rows hidden fc2 cols
   (maddFlat xPre y, { xPre := xPre, xn := xn, rows := rows, cols := cols, rms := rms, hPre := hPre, h := h, hidden := hidden })
 
+-- backward of the MLP block: returns the input gradient plus the fc1/fc2 weight grads
 def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array Float × (Array Float × Array Float) :=
   let dh := matmulBwdX dout c.rows c.cols fc2 c.hidden
   let dfc2 := matmulBwdW dout c.rows c.cols c.h c.hidden
