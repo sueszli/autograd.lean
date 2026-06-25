@@ -24,8 +24,10 @@ def matmulBwdX {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K
 def matmulBwdW {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : Array K :=
   (Array.range (k * m)).map fun idx => (Array.range n).foldl (fun s i => s + x[i * k + (idx / m)]! * dout[i * m + (idx % m)]!) (0 : K)
 
+-- reading a freshly built `(range n).map f` at `k` gives `f k`
 theorem map_range_getElem! {K : Type} [Inhabited K] (f : Nat → K) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
 
+-- result entry (j,i) is input entry (i,j)
 theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : Nat) (hi : i < r) (hj : j < c) : (transposeFlat x r c)[j * r + i]! = x[i * c + j]! := by
   have hr : 0 < r := Nat.lt_of_le_of_lt (Nat.zero_le i) hi
   have hbound : j * r + i < c * r := by
@@ -36,6 +38,7 @@ theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : N
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (j * r + i) % r = i by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hi], show (j * r + i) / r = j by rw [Nat.mul_comm j r, Nat.mul_add_div hr, Nat.div_eq_of_lt hi, Nat.add_zero]]
 
+-- transpose is its own inverse
 theorem transposeFlat_involution (x : Array Float) (r : Nat) (c : Nat) (h : x.size = r * c) : transposeFlat (transposeFlat x r c) c r = x := by
   apply Array.ext
   · simp [transposeFlat, h]
