@@ -8,22 +8,24 @@ open Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-Param tensors
+Weights instance
 ===--------------------------------------------------------------------------===
 -/
 
-def paramTensors (p : Params) : Array Tensor := Id.run do
-  let mut a : Array Tensor := #[p.wte, p.wpe, p.lmHead]
-  for b in p.blocks do
-    a := a.push b.attnWq |>.push b.attnWk |>.push b.attnWv |>.push b.attnWo |>.push b.mlpFc1 |>.push b.mlpFc2
-  return a
-
-def ofTensors (ws : Array Tensor) : Params :=
-  let nBlocks := (ws.size - 3) / 6
-  { wte := ws[0]!, wpe := ws[1]!, lmHead := ws[2]!,
-    blocks := (Array.range nBlocks).map fun h =>
-      let o := 3 + h * 6
-      { attnWq := ws[o]!, attnWk := ws[o + 1]!, attnWv := ws[o + 2]!, attnWo := ws[o + 3]!, mlpFc1 := ws[o + 4]!, mlpFc2 := ws[o + 5]! } }
+instance : Weights Params where
+  mapM f p := do
+    let wte ← f p.wte
+    let wpe ← f p.wpe
+    let lmHead ← f p.lmHead
+    let blocks ← p.blocks.mapM fun b => do
+      let attnWq ← f b.attnWq
+      let attnWk ← f b.attnWk
+      let attnWv ← f b.attnWv
+      let attnWo ← f b.attnWo
+      let mlpFc1 ← f b.mlpFc1
+      let mlpFc2 ← f b.mlpFc2
+      pure { attnWq, attnWk, attnWv, attnWo, mlpFc1, mlpFc2 }
+    pure { wte, wpe, lmHead, blocks }
 
 private def testParams : Params :=
   let mk := fun (rows : Nat) (cols : Nat) (id : Nat) => Tensor.leaf (Array.replicate (rows * cols) 0.0) rows cols id true
@@ -31,13 +33,10 @@ private def testParams : Params :=
   { wte := mk 3 2 ParamIds.wte, wpe := mk 2 2 ParamIds.wpe, lmHead := mk 2 3 ParamIds.lmHead, blocks := #[blk] }
 
 -- tests
-#guard (paramTensors testParams).size == 9
-#guard (ofTensors (paramTensors testParams)).blocks.size == 1
+#guard (zeroMoments testParams).1.size == 9 && (zeroMoments testParams).2.size == 9
 #guard
-  let ws := paramTensors testParams
-  let (m, v) := zeroMoments ws
-  let (ws', _, _) := adamWStep 1 ws m v #[] 10
-  let p' := ofTensors ws'
+  let (m, v) := zeroMoments testParams
+  let (p', _, _) := adamWStep 1 testParams m v #[] 10
   arrApproxEq p'.wte.data testParams.wte.data && arrApproxEq p'.blocks[0]!.mlpFc2.data testParams.blocks[0]!.mlpFc2.data
 
 end MicroGPT

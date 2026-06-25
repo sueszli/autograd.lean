@@ -44,22 +44,29 @@ def stepOne (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × 
   let (p', m', v') := adamWBuf step lr t.data g mi vi beta1 beta2
   ({ t with data := p' }, upsert m t.id m', upsert v t.id v')
 
-def zeroMoments (ws : Array Tensor) : Array (Nat × Array Float) × Array (Nat × Array Float) :=
-  let entries := ws.map fun t => (t.id, zerosLike t)
+-- a model is `Weights` if its tensors can be traversed structure-preservingly; the optimizer works on any such type.
+class Weights (α : Type) where
+  mapM : {M : Type → Type} → [Monad M] → (Tensor → M Tensor) → α → M α
+
+instance : Weights (Array Tensor) where
+  mapM f a := a.mapM f
+
+def zeroMoments {α : Type} [Weights α] (p : α) : Array (Nat × Array Float) × Array (Nat × Array Float) :=
+  let collect : Tensor → StateM (Array (Nat × Array Float)) Tensor := fun t => do modify (·.push (t.id, zerosLike t)); pure t
+  let entries := ((Weights.mapM collect p).run #[]).2
   (entries, entries)
 
-def adamWStep (step : Nat) (ws : Array Tensor) (m v gradientMap : Array (Nat × Array Float)) (numSteps : Nat := 1000) (lr0 : Float := 0.01) : Array Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
+def adamWStep {α : Type} [Weights α] (step : Nat) (p : α) (m v gradientMap : Array (Nat × Array Float)) (numSteps : Nat := 1000) (lr0 : Float := 0.01) : α × Array (Nat × Array Float) × Array (Nat × Array Float) :=
   let progress : Float := if numSteps = 0 then 0.0 else (step - 1).toFloat / numSteps.toFloat
   let lrRaw := lr0 * (1.0 - progress)
   let lr := if lrRaw < 0.0 then 0.0 else lrRaw
-  Id.run do
-    let mut out : Array Tensor := #[]
-    let mut m := m
-    let mut v := v
-    for w in ws do
-      let (w', m', v') := stepOne step lr w gradientMap m v
-      out := out.push w'; m := m'; v := v'
-    return (out, m, v)
+  let upd : Tensor → StateM (Array (Nat × Array Float) × Array (Nat × Array Float)) Tensor := fun t => do
+    let (m, v) ← get
+    let (t', m', v') := stepOne step lr t gradientMap m v
+    set (m', v')
+    pure t'
+  let (p', s) := (Weights.mapM upd p).run (m, v)
+  (p', s.1, s.2)
 
 theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
   cases hx : xs.find? p with
