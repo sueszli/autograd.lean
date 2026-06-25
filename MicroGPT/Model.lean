@@ -65,7 +65,12 @@ def mlpFc2 (h : Nat) : Nat := blockBase h + 5
 end ParamIds
 
 inductive Role where
-  | attnWq | attnWk | attnWv | attnWo | mlpFc1 | mlpFc2
+  | attnWq
+  | attnWk
+  | attnWv
+  | attnWo
+  | mlpFc1
+  | mlpFc2
   deriving DecidableEq
 
 inductive Slot where
