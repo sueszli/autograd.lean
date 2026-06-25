@@ -27,6 +27,21 @@ structure Params where
   blocks : Array TransformerBlock
   deriving Inhabited
 
+instance : Weights Params where
+  mapM f p := do
+    let wte ← f p.wte
+    let wpe ← f p.wpe
+    let lmHead ← f p.lmHead
+    let blocks ← p.blocks.mapM fun b => do
+      let attnWq ← f b.attnWq
+      let attnWk ← f b.attnWk
+      let attnWv ← f b.attnWv
+      let attnWo ← f b.attnWo
+      let mlpFc1 ← f b.mlpFc1
+      let mlpFc2 ← f b.mlpFc2
+      pure { attnWq, attnWk, attnWv, attnWo, mlpFc1, mlpFc2 }
+    pure { wte, wpe, lmHead, blocks }
+
 -- tests
 theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl
 #guard let p : Params := { wte := Tensor.leaf #[1] 1 1 0 true, wpe := Tensor.leaf #[2] 1 1 1 true, lmHead := Tensor.leaf #[3] 1 1 2 true, blocks := #[] }; arrApproxEq p.wte.data #[1] && p.blocks.size == 0
