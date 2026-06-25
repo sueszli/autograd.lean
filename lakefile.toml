@@ -16,4 +16,4 @@ globs = ["MicroGPT.+"]
 
 [[lean_exe]]
 name = "parity"
-root = "Parity.Main"
+root = "MicroGPT.Parity"

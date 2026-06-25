@@ -51,4 +51,26 @@ def rngGaussFlat (r c : Nat) (σ : Float) (st : UInt64) : Array Float × UInt64 
 #guard approxEq (rngGauss 0.0 0.08 7).1 (0.08 * (rngGauss 0.0 1.0 7).1)
 #guard (rngGaussFlat 3 4 0.08 1).1.size == 12
 
+/-!
+===--------------------------------------------------------------------------===
+Progress bar
+===--------------------------------------------------------------------------===
+-/
+
+-- tqdm-style in-place bar: `\r` rewrites the same line, flush forces it to show.
+def progressBar (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
+  let width := 30
+  let filled := (cur * width) / total
+  let bar := String.ofList (List.replicate filled '█') ++ String.ofList (List.replicate (width - filled) ' ')
+  let pct := (cur * 100) / total
+  let rate := if elapsedMs == 0 then 0 else (cur * 1000) / elapsedMs
+  let etaMs := if cur == 0 then 0 else (elapsedMs * (total - cur)) / cur
+  let fmt := fun (ms : Nat) => let s := ms / 1000; let r := s % 60; s!"{s / 60}:" ++ (if r < 10 then s!"0{r}" else s!"{r}")
+  s!"{pct}%|{bar}| {cur}/{total} [{fmt elapsedMs}<{fmt etaMs}, {rate}it/s]"
+
+-- tests
+#guard "0%|".isPrefixOf (progressBar 0 10 0)
+#guard "50%|".isPrefixOf (progressBar 5 10 0)
+#guard "100%|".isPrefixOf (progressBar 10 10 1000)
+
 end Autograd
