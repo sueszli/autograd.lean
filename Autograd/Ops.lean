@@ -8,7 +8,7 @@ Matmul
 ===--------------------------------------------------------------------------===
 -/
 
--- generic over `K` so one definition both executes (`Float`) and is tested/proved on exact `ℚ`: Lean has no float reasoning, so proofs need a `CommRing`.
+-- generic over `K`: runs on `Float`, proves on exact `ℚ` (Lean can't reason about floats).
 def transposeFlat {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : Array K :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
