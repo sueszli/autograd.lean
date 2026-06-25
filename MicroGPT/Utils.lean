@@ -3,7 +3,7 @@ import Lean.Data.Json
 
 namespace MicroGPT
 open Autograd
-open Lean (Json)
+open Lean (Json fromJson?)
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -11,40 +11,19 @@ JSON
 ===--------------------------------------------------------------------------===
 -/
 
-def asArr (j : Json) : IO (Array Json) :=
-  match j.getArr? with
-  | .ok a => pure a
-  | .error e => throw (IO.userError s!"expected array: {e}")
-
-def asNat (j : Json) : IO Nat :=
-  match j.getNat? with
-  | .ok n => pure n
-  | .error e => throw (IO.userError s!"expected nat: {e}")
-
-def asFloat (j : Json) : IO Float :=
-  match j.getNum? with
-  | .ok n => pure n.toFloat
-  | .error e => throw (IO.userError s!"expected number: {e}")
-
 def getObj (j : Json) (k : String) : IO Json :=
   match j.getObjVal? k with
   | .ok v => pure v
   | .error e => throw (IO.userError s!"missing key '{k}': {e}")
 
-def parseNatRows (j : Json) : IO (Array (Array Nat)) := do
-  (← asArr j).mapM fun row => do (← asArr row).mapM asNat
+def parseNatRows (j : Json) : IO (Array (Array Nat)) := IO.ofExcept (fromJson? j)
 
-def parseFloatRows (j : Json) : IO (Array (Array Float)) := do
-  (← asArr j).mapM fun row => do (← asArr row).mapM asFloat
+def parseFloatRows (j : Json) : IO (Array (Array Float)) := IO.ofExcept (fromJson? j)
 
 def asRows (j : Json) : IO (Array Float × Nat × Nat) := do
-  let rows ← asArr j
-  let r := rows.size
-  let c : Nat := ← if r = 0 then pure 0 else do let row0 ← asArr rows[0]!; pure row0.size
-  let flat ← rows.foldlM (init := (#[] : Array Float)) fun acc row => do
-    let cols ← asArr row
-    return acc ++ (← cols.mapM asFloat)
-  return (flat, r, c)
+  let rows : Array (Array Float) ← IO.ofExcept (fromJson? j)
+  let c := if 0 < rows.size then rows[0]!.size else 0
+  return (rows.flatten, rows.size, c)
 
 -- Python stores linear weights `[out × in]`, `matmulFwd` wants `[in × out]`. Transpose.
 def asRowsT (j : Json) : IO (Array Float × Nat × Nat) := do

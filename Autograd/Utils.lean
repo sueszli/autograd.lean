@@ -10,10 +10,7 @@ def approxEq (a : Float) (b : Float) (tol : Float := 1e-9) : Bool := (a - b).abs
 
 def arrApproxEq (a : Array Float) (b : Array Float) (tol : Float := 1e-9) : Bool := a.isEqv b (approxEq · · tol)
 
-def arrMaxDiff (a : Array Float) (b : Array Float) : Float :=
-  (Array.range a.size).foldl (init := 0.0) fun mx i =>
-    let d := (a[i]! - b[i]!).abs
-    if d > mx then d else mx
+def arrMaxDiff (a : Array Float) (b : Array Float) : Float := (Array.zipWith (fun x y => (x - y).abs) a b).foldl max 0.0
 
 -- tests
 #guard approxEq 1.0 1.0
@@ -23,6 +20,8 @@ def arrMaxDiff (a : Array Float) (b : Array Float) : Float :=
 #guard arrApproxEq #[] #[]
 #guard !arrApproxEq #[1.0, 2.0] #[1.0, 2.0, 3.0]
 #guard approxEq (arrMaxDiff #[1, 2, 5] #[1, 4, 1]) 4.0
+#guard approxEq (arrMaxDiff #[] #[]) 0.0
+#guard approxEq (arrMaxDiff #[3, 3] #[3, 3]) 0.0
 
 /-!
 ===--------------------------------------------------------------------------===

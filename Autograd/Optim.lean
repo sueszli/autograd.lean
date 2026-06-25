@@ -1,4 +1,3 @@
-import Autograd.Ops
 import Autograd.Tensor
 
 namespace Autograd
