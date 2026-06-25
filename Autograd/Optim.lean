@@ -22,7 +22,7 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   | none => a.push (id, x)
 
 -- `beta1`, `beta2` and `lr0` (in the model's Config) plus init `σ` were grid-searched for bit-exact parity with the Python reference.
-private def adamWBuf (beta1 beta2 : Float) (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
+private def adamWBuf (step : Nat) (lr : Float) (p g m v : Array Float) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
   let invBias1 := 1.0 / (1.0 - Float.pow beta1 t)
   let invBias2 := 1.0 / (1.0 - Float.pow beta2 t)
@@ -36,12 +36,12 @@ private def adamWBuf (beta1 beta2 : Float) (step : Nat) (lr : Float) (p g m v : 
   let np : Array Float := (Array.range n).map fun i => p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
-def stepOne (beta1 beta2 : Float) (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (m v : Array (Nat × Array Float)) : Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
+def stepOne (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (m v : Array (Nat × Array Float)) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
   let z := zerosLike t
   let g := lookup gradientMap t.id z
   let mi := lookup m t.id z
   let vi := lookup v t.id z
-  let (p', m', v') := adamWBuf beta1 beta2 step lr t.data g mi vi
+  let (p', m', v') := adamWBuf step lr t.data g mi vi beta1 beta2
   ({ t with data := p' }, upsert m t.id m', upsert v t.id v')
 
 theorem find?_congr_of_localized {α : Type} (p : α → Bool) (xs : Array α) (ys : Array α) (hsize : xs.size = ys.size) (h : ∀ (k : Nat) (hk : k < xs.size) (hk' : k < ys.size), xs[k] = ys[k] ∨ (p xs[k] = false ∧ p ys[k] = false)) : xs.find? p = ys.find? p := by
@@ -148,16 +148,16 @@ theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array
 
 -- tests
 theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by simp [zerosLike]
-theorem adamWBuf_param_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).1.size = p.size := by simp [adamWBuf]
-theorem adamWBuf_m_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
-theorem adamWBuf_v_size (beta1 beta2 : Float) (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf beta1 beta2 step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_param_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_m_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
+theorem adamWBuf_v_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
 #guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
 #guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
 #guard arrApproxEq (lookup #[(5, #[1, 2])] 9 #[0, 0]) #[0, 0]
 #guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]
 #guard let a := upsert #[(5, #[1, 2])] 6 #[3, 3]; a.size == 2 && arrApproxEq (lookup a 6 #[]) #[3, 3]
-#guard let (np, nm, nv) := adamWBuf 0.85 0.99 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
-#guard let (np, nm, nv) := adamWBuf 0.85 0.99 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
-#guard let (t', _, _) := stepOne 0.85 0.99 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] #[] #[]; arrApproxEq t'.data #[5.0, -3.0]
+#guard let (np, nm, nv) := adamWBuf 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
+#guard let (np, nm, nv) := adamWBuf 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
+#guard let (t', _, _) := stepOne 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) #[] #[] #[]; arrApproxEq t'.data #[5.0, -3.0]
 
 end Autograd
