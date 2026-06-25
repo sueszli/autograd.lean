@@ -25,7 +25,8 @@ def matmulBwdW {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K
   (Array.range (k * m)).map fun idx => (Array.range n).foldl (fun s i => s + x[i * k + (idx / m)]! * dout[i * m + (idx % m)]!) (0 : K)
 
 -- reading a freshly built `(range n).map f` at `k` gives `f k`
-theorem map_range_getElem! {K : Type} [Inhabited K] (f : Nat → K) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
+theorem map_range_getElem! {K : Type} [Inhabited K] (f : Nat → K) (n : Nat) (k : Nat) (hk : k < n) : ((Array.range n).map f)[k]! = f k := by
+  rw [getElem!_pos _ k (by simp [hk]), Array.getElem_map, Array.getElem_range]
 
 -- result entry (j,i) is input entry (i,j)
 theorem transposeFlat_get (x : Array Float) (r : Nat) (c : Nat) (i : Nat) (j : Nat) (hi : i < r) (hj : j < c) : (transposeFlat x r c)[j * r + i]! = x[i * c + j]! := by
@@ -73,7 +74,8 @@ Element-wise
 def maddFlat {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array K) : Array K :=
   (Array.range a.size).map fun i => a[i]! + b[i]!
 
-private def reluFlat (x : Array Float) : Array Float := x.map fun z => if z > 0.0 then z else 0.0
+private def reluFlat (x : Array Float) : Array Float :=
+  x.map fun z => if z > 0.0 then z else 0.0
 
 private def reluBwdFlat (dout hPre : Array Float) : Array Float :=
   (Array.range dout.size).map fun i => if hPre[i]! > 0.0 then dout[i]! else 0.0
