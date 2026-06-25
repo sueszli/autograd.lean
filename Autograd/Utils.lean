@@ -32,7 +32,7 @@ Progress bar
 def tqdm (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
   let width := 30
   let filled := (cur * width) / total
-  let bar := String.ofList (List.replicate filled '█') ++ String.ofList (List.replicate (width - filled) ' ')
+  let bar := ("".pushn '█' filled).pushn ' ' (width - filled)
   let pct := (cur * 100) / total
   let rate := if elapsedMs == 0 then 0 else (cur * 1000) / elapsedMs
   let etaMs := if cur == 0 then 0 else (elapsedMs * (total - cur)) / cur

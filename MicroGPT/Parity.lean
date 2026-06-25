@@ -4,7 +4,7 @@ import Lean.Data.Json
 
 open Autograd
 open MicroGPT
-open Lean (Json)
+open Lean (Json fromJson?)
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -38,9 +38,9 @@ def main : IO Unit := do
   let nEmbed := 16
   let nHead := 4
   let numSteps := 1000
-  let inputs ← parseNatRows (← getObj j "inputs")
-  let targets ← parseNatRows (← getObj j "targets")
-  let masks ← parseFloatRows (← getObj j "masks")
+  let inputs : Array (Array Nat) ← IO.ofExcept (fromJson? (← getObj j "inputs"))
+  let targets : Array (Array Nat) ← IO.ofExcept (fromJson? (← getObj j "targets"))
+  let masks : Array (Array Float) ← IO.ofExcept (fromJson? (← getObj j "masks"))
   let initP ← paramsFromJson (← getObj j "init_weights")
   let refP ← paramsFromJson (← getObj j "final_weights")
 
@@ -61,25 +61,17 @@ def main : IO Unit := do
 
   let atol : Float := 1e-11
   let atolStr := "1e-11"
-  let pairs : Array (String × Tensor × Tensor) := Id.run do
-    let mut a : Array (String × Tensor × Tensor) := #[("wte", p.wte, refP.wte), ("wpe", p.wpe, refP.wpe), ("lm_head", p.lmHead, refP.lmHead)]
-    for h in [0:nLayer] do
-      let b := p.blocks[h]!
-      let r := refP.blocks[h]!
-      a := a.push (s!"layer{h}.attn_wq", b.attnWq, r.attnWq)
-      a := a.push (s!"layer{h}.attn_wk", b.attnWk, r.attnWk)
-      a := a.push (s!"layer{h}.attn_wv", b.attnWv, r.attnWv)
-      a := a.push (s!"layer{h}.attn_wo", b.attnWo, r.attnWo)
-      a := a.push (s!"layer{h}.mlp_fc1", b.mlpFc1, r.mlpFc1)
-      a := a.push (s!"layer{h}.mlp_fc2", b.mlpFc2, r.mlpFc2)
-    return a
-  let mut failures : Array (String × Float) := #[]
-  for (label, a, b) in pairs do
+  let globals : Array (String × Tensor × Tensor) := #[("wte", p.wte, refP.wte), ("wpe", p.wpe, refP.wpe), ("lm_head", p.lmHead, refP.lmHead)]
+  let pairs : Array (String × Tensor × Tensor) := globals ++ (Array.range nLayer).flatMap fun h =>
+    let b := p.blocks[h]!
+    let r := refP.blocks[h]!
+    #[(s!"layer{h}.attn_wq", b.attnWq, r.attnWq), (s!"layer{h}.attn_wk", b.attnWk, r.attnWk), (s!"layer{h}.attn_wv", b.attnWv, r.attnWv), (s!"layer{h}.attn_wo", b.attnWo, r.attnWo), (s!"layer{h}.mlp_fc1", b.mlpFc1, r.mlpFc1), (s!"layer{h}.mlp_fc2", b.mlpFc2, r.mlpFc2)]
+  let failures : Array (String × Float) := pairs.filterMap fun (label, a, b) =>
     let mx := arrMaxDiff a.data b.data
-    if mx > atol then failures := failures.push (label, mx)
+    if mx > atol then some (label, mx) else none
   let totalMs := (← IO.monoMsNow) - startMs
   let ms := totalMs % 1000
-  let msStr := if ms < 10 then s!"00{ms}" else if ms < 100 then s!"0{ms}" else s!"{ms}"
+  let msStr := String.leftpad 3 '0' (toString ms)
   if failures.isEmpty then
     IO.println s!"passed parity check (atol={atolStr})"
     IO.println s!"total time: {totalMs / 1000}.{msStr}s"

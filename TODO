@@ -1,13 +1,7 @@
-review Autograd
-    - Ops
-    - Optim
-    - Tensor
-    - Utils
-review MicroGPT
-    - Init
-    - Model
-    - Optim
-review Parity
-    - Main
+review code, polish
 
 add theorems
+
+add readme
+
+create new repo and transfer commits with clean commit history
