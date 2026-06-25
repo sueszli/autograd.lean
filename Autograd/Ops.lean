@@ -321,8 +321,6 @@ Attention
 
 structure AttnCache where
   xPre : Array Float
-  xPreRows : Nat
-  xPreCols : Nat
   xn : Array Float
   rms : Array Float
   q : Array (Array Float)
@@ -365,7 +363,7 @@ def attnFwd (nEmbed nHead : Nat) (xPre : Array Float) (rows : Nat) (wq wk wv wo 
   let merged := mergeHeadsFlat outs rows nHead headDim
   let outFlat := matmulFwd merged rows cols wo cols
   let outRes := maddFlat xPre outFlat
-  (outRes, { xPre := xPre, xPreRows := rows, xPreCols := cols, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
+  (outRes, { xPre := xPre, xn := xn, rms := rms, q := qs, k := ks, v := vs, attnW := aws, outFlat := merged })
 
 def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo : Array Float) (c : AttnCache) : Array Float × (Array Float × Array Float × Array Float × Array Float) :=
   let cols := nEmbed
