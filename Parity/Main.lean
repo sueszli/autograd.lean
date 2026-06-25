@@ -1,6 +1,5 @@
 import Autograd.Ops
 import Autograd.Tensor
-import MicroGPT.Init
 import MicroGPT.Model
 import Lean.Data.Json
 
