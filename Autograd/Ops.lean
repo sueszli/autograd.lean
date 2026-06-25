@@ -438,12 +438,9 @@ Multilayer perceptron
 structure MlpCache where
   xPre : Array Float
   xn : Array Float
-  rows : Nat
-  cols : Nat
   rms : Array Float
   hPre : Array Float
   h : Array Float
-  hidden : Nat
   deriving Inhabited
 
 def mlpFwd (nEmbed : Nat) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Float) (epsilon : Float := 1e-5) : Array Float × MlpCache :=
@@ -453,15 +450,17 @@ def mlpFwd (nEmbed : Nat) (xPre : Array Float) (rows : Nat) (fc1 fc2 : Array Flo
   let hPre := matmulFwd xn rows cols fc1 hidden
   let h := reluFlat hPre
   let y := matmulFwd h rows hidden fc2 cols
-  (maddFlat xPre y, { xPre := xPre, xn := xn, rows := rows, cols := cols, rms := rms, hPre := hPre, h := h, hidden := hidden })
+  (maddFlat xPre y, { xPre := xPre, xn := xn, rms := rms, hPre := hPre, h := h })
 
-def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array Float × (Array Float × Array Float) :=
-  let dh := matmulBwdX dout c.rows c.cols fc2 c.hidden
-  let dfc2 := matmulBwdW dout c.rows c.cols c.h c.hidden
+def mlpBwd (nEmbed : Nat) (rows : Nat) (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array Float × (Array Float × Array Float) :=
+  let cols := nEmbed
+  let hidden := 4 * cols
+  let dh := matmulBwdX dout rows cols fc2 hidden
+  let dfc2 := matmulBwdW dout rows cols c.h hidden
   let dhPre := reluBwdFlat dh c.hPre
-  let dxn := matmulBwdX dhPre c.rows c.hidden fc1 c.cols
-  let dfc1 := matmulBwdW dhPre c.rows c.hidden c.xn c.cols
-  (maddFlat dout (rmsnormBwd dxn c.xPre c.rms c.rows c.cols), (dfc1, dfc2))
+  let dxn := matmulBwdX dhPre rows hidden fc1 cols
+  let dfc1 := matmulBwdW dhPre rows hidden c.xn cols
+  (maddFlat dout (rmsnormBwd dxn c.xPre c.rms rows cols), (dfc1, dfc2))
 
 -- tests
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
@@ -472,12 +471,12 @@ def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array F
        let z : Array Float := Array.replicate 64 0.0
        let dout : Array Float := #[1, 1, 1, 1, 1, 1, 1, 1]
        let (_, c) := mlpFwd 4 x 2 z z
-       let (dxPre, (df1, df2)) := mlpBwd dout z z c
+       let (dxPre, (df1, df2)) := mlpBwd 4 2 dout z z c
        arrApproxEq dxPre dout && df1.size == 64 && df2.size == 64
 #guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
        let z : Array Float := Array.replicate 64 0.0
        let (_, c) := mlpFwd 4 x 2 z z
-       c.hPre.size == 32 && c.h.size == 32 && c.xn.size == 8 && c.rms.size == 2 && c.hidden == 16
+       c.hPre.size == 32 && c.h.size == 32 && c.xn.size == 8 && c.rms.size == 2
 #guard let x : Array Float := #[0.5, -1.0, 2.0, 1.5, -0.5, 0.8, -1.2, 0.3]
        let fc1 : Array Float := (Array.range 64).map fun i => Float.sin (i.toFloat * 0.7)
        let fc2 : Array Float := (Array.range 64).map fun i => Float.cos (i.toFloat * 0.5)

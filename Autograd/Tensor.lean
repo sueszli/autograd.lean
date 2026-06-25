@@ -45,7 +45,7 @@ inductive GradFn where
   | rmsnormOp (a : Tensor) (rms : Array Float)
   | lossOp    (logits : Tensor) (probs : Array Float) (targets : Array Nat) (mask : Array Float) (sumMask : Float)
   | attnOp    (xPre wq wk wv wo : Tensor) (cache : AttnCache) (nEmbed nHead : Nat)
-  | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache)
+  | mlpOp     (xPre fc1 fc2 : Tensor) (cache : MlpCache) (nEmbed : Nat)
 end
 
 instance : Inhabited Tensor := ⟨{ data := #[], shape := #[], id := 0, requiresGrad := false, gradFn := .leaf }⟩
@@ -97,7 +97,7 @@ def attn (nEmbed nHead : Nat) (epsilon maskValue : Float) (xPre wq wk wv wo : Te
 
 def mlp (nEmbed : Nat) (epsilon : Float) (xPre fc1 fc2 : Tensor) : Tensor :=
   let (out, cache) := mlpFwd nEmbed xPre.data xPre.rows fc1.data fc2.data epsilon
-  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache }
+  { data := out, shape := xPre.shape, id := 0, requiresGrad := xPre.requiresGrad || fc1.requiresGrad || fc2.requiresGrad, gradFn := .mlpOp xPre fc1 fc2 cache nEmbed }
 
 def maskedCE (logits : Tensor) (targets : Array Nat) (mask : Array Float) : Tensor :=
   let probs := softmaxRows logits.data logits.rows logits.cols
@@ -351,8 +351,8 @@ private partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientM
     let gradientMap := wk.backwardAcc dWk gradientMap
     let gradientMap := wv.backwardAcc dWv gradientMap
     wo.backwardAcc dWo gradientMap
-  | .mlpOp xPre fc1 fc2 cache =>
-    let (dxPre, (df1, df2)) := mlpBwd incoming fc1.data fc2.data cache
+  | .mlpOp xPre fc1 fc2 cache nEmbed =>
+    let (dxPre, (df1, df2)) := mlpBwd nEmbed xPre.rows incoming fc1.data fc2.data cache
     let gradientMap := xPre.backwardAcc dxPre gradientMap
     let gradientMap := fc1.backwardAcc df1 gradientMap
     fc2.backwardAcc df2 gradientMap
