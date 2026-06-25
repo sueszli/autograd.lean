@@ -1,4 +1,5 @@
 import Autograd.Ops
+import Std.Data.HashMap
 import Mathlib.LinearAlgebra.Matrix.Trace
 import Mathlib.Data.Real.Basic
 import Mathlib.Analysis.SpecialFunctions.Log.Deriv
@@ -276,8 +277,8 @@ theorem matmul_taints_grad : ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 false) @ (Tensor.
 Backward
 
 Immutable tensors have no `.grad` field.
-`backwardAcc` returns a `gradientMap` of type `Array (Nat × Array Float)`
-where each entry is `(t.id, gradient of t.data)`.
+`backwardAcc` returns a `gradientMap` of type `Std.HashMap Nat (Array Float)`
+mapping each `t.id` to the gradient of `t.data`.
 
   let a := Tensor.leaf #[1,2] .. (id := 0)       -- a.data = [1,2]
   let b := Tensor.leaf #[3,4] .. (id := 1)       -- b.data = [3,4]
@@ -294,34 +295,34 @@ where each entry is `(t.id, gradient of t.data)`.
 backprop starts here with seed #[1,1] and the gradient flows down to the leaves.
 `a` is a shared and reached via two paths, so it has two gradients sum.
 
-  c.backwardAcc #[1,1] #[]
-  --            ^^^^^^      gradient to start from, all 1s because backprop begins at c
-  --                   ^^^  empty map to fill
+  c.backwardAcc #[1,1] ∅
+  --            ^^^^^^   gradient to start from, all 1s because backprop begins at c
+  --                   ^  empty map to fill
 
 the `gradientMap` evolves as the walk reaches each leaf, last line is the return value:
 
-  #[]                               -- map starts empty
-  #[(0, #[1,1])]                    -- reached a (id 0): not present yet, append
-  #[(0, #[1,1]), (1, #[1,1])]       -- reached b (id 1): not present yet, append
-  #[(0, #[2,2]), (1, #[1,1])]       -- reached a again (id 0): already present, so sum -> [2,2]
+  {}                            -- map starts empty
+  {0 ↦ #[1,1]}                  -- reached a (id 0): not present yet, insert
+  {0 ↦ #[1,1], 1 ↦ #[1,1]}      -- reached b (id 1): not present yet, insert
+  {0 ↦ #[2,2], 1 ↦ #[1,1]}      -- reached a again (id 0): already present, so sum -> [2,2]
 
 Each `#[1,1]` is the gradient of that tensor's `.data` (same length).
-`gradientMapAdd` sums into an entry if its `id` is already present, else appends.
+`gradientMapAdd` sums into an entry if its `id` is already present, else inserts.
 
 The optimizer pulls a weight's gradient out of the final map by its `id`:
 
-  lookup gradientMap a.id       -- a.id = 0 -> #[2,2]
-  lookup gradientMap b.id       -- b.id = 1 -> #[1,1]
+  gradientMap.getD a.id z       -- a.id = 0 -> #[2,2]
+  gradientMap.getD b.id z       -- b.id = 1 -> #[1,1]
 ===--------------------------------------------------------------------------===
 -/
 
-private def gradientMapAdd (gradientMap : Array (Nat × Array Float)) (id : Nat) (g : Array Float) : Array (Nat × Array Float) :=
-  match gradientMap.findIdx? (fun (i, _) => i = id) with
-  | some i => gradientMap.set! i (id, maddFlat gradientMap[i]!.2 g)
-  | none => gradientMap.push (id, g)
+private def gradientMapAdd (gradientMap : Std.HashMap Nat (Array Float)) (id : Nat) (g : Array Float) : Std.HashMap Nat (Array Float) :=
+  match gradientMap[id]? with
+  | some prev => gradientMap.insert id (maddFlat prev g)
+  | none => gradientMap.insert id g
 
 -- walks the gradFn DAG, accumulating each leaf's gradient into the map (shared leaves sum)
-private partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
+private partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Std.HashMap Nat (Array Float)) : Std.HashMap Nat (Array Float) :=
   match t.gradFn with
   | .leaf =>
     if t.requiresGrad then gradientMapAdd gradientMap t.id incoming else gradientMap
@@ -357,86 +358,19 @@ private partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientM
     let gradientMap := fc1.backwardAcc df1 gradientMap
     fc2.backwardAcc df2 gradientMap
 
-def backward (loss : Tensor) : Array (Nat × Array Float) :=
-  loss.backwardAcc #[1.0] #[]
-
--- adding an unseen id appends a new entry
-theorem gradientMapAdd_fresh (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (h : gm.findIdx? (fun (i, _) => i = id) = none)
-    : gradientMapAdd gm id g = gm.push (id, g) := by unfold gradientMapAdd; rw [h]
-
--- adding the same id twice sums the two gradients
-theorem gradientMapAdd_shared (id : Nat) (g : Array Float) (g' : Array Float)
-    : gradientMapAdd (gradientMapAdd #[] id g) id g' = #[(id, maddFlat g g')] := by
-  have h0 : gradientMapAdd #[] id g = #[(id, g)] := by unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
-  rw [h0]; unfold gradientMapAdd; simp [Array.findIdx?, Array.findIdx?.loop]
-
--- after adding an id, an entry for it exists
-theorem gradientMapAdd_mem (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float)
-    : ∃ p ∈ (gradientMapAdd gm id g), p.1 = id := by
-  unfold gradientMapAdd
-  split
-  case h_1 i h =>
-    have hi : i < gm.size := (Array.findIdx?_eq_some_iff_getElem.mp h).1
-    exact ⟨(id, maddFlat gm[i]!.2 g), by rw [Array.set!_eq_setIfInBounds]; exact Array.mem_setIfInBounds hi, rfl⟩
-  case h_2 h => exact ⟨(id, g), by simp, rfl⟩
-
--- adding a gradient never drops an id already present
-theorem gradientMapAdd_pres_ids (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ gm, p.1 = j)
-    : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j := by
-  obtain ⟨p, hp, hpj⟩ := hj
-  rw [Array.mem_iff_getElem] at hp
-  obtain ⟨k, hk, hkp⟩ := hp
-  unfold gradientMapAdd
-  split
-  case h_2 h => exact ⟨p, Array.mem_push.mpr (Or.inl (Array.mem_iff_getElem.mpr ⟨k, hk, hkp⟩)), hpj⟩
-  case h_1 i h =>
-    have hi : i < gm.size := (Array.findIdx?_eq_some_iff_getElem.mp h).1
-    rw [Array.set!_eq_setIfInBounds]
-    by_cases hik : i = k
-    · have hmatch : gm[i].1 = id := by simpa using (Array.findIdx?_eq_some_iff_getElem.mp h).2.1
-      refine ⟨(id, maddFlat gm[i]!.2 g), Array.mem_setIfInBounds hi, ?_⟩
-      subst hik
-      rw [hkp] at hmatch
-      rw [← hmatch]; exact hpj
-    · have hsize : k < (gm.setIfInBounds i (id, maddFlat gm[i]!.2 g)).size := by rw [Array.size_setIfInBounds]; exact hk
-      refine ⟨p, Array.mem_iff_getElem.mpr ⟨k, hsize, ?_⟩, hpj⟩
-      rw [Array.getElem_setIfInBounds_ne hk hik, hkp]
-
--- every id after an add is the new id or one already present (no spurious ids)
-theorem gradientMapAdd_ids_subset (gm : Array (Nat × Array Float)) (id : Nat) (g : Array Float) (j : Nat) (hj : ∃ p ∈ (gradientMapAdd gm id g), p.1 = j)
-    : j = id ∨ ∃ p ∈ gm, p.1 = j := by
-  obtain ⟨p, hp, hpj⟩ := hj
-  unfold gradientMapAdd at hp
-  split at hp
-  case h_2 h =>
-    rcases Array.mem_push.mp hp with hmem | heq
-    · exact Or.inr ⟨p, hmem, hpj⟩
-    · left; rw [← hpj, heq]
-  case h_1 i h =>
-    have hi : i < gm.size := (Array.findIdx?_eq_some_iff_getElem.mp h).1
-    rw [Array.set!_eq_setIfInBounds] at hp
-    rw [Array.mem_iff_getElem] at hp
-    obtain ⟨k, hk, hkp⟩ := hp
-    rw [Array.size_setIfInBounds] at hk
-    by_cases hik : i = k
-    · subst hik
-      rw [Array.getElem_setIfInBounds_self] at hkp
-      left; rw [← hpj, ← hkp]
-    · rw [Array.getElem_setIfInBounds_ne hk hik] at hkp
-      exact Or.inr ⟨p, Array.mem_iff_getElem.mpr ⟨k, hk, hkp⟩, hpj⟩
+def backward (loss : Tensor) : Std.HashMap Nat (Array Float) :=
+  loss.backwardAcc #[1.0] ∅
 
 -- tests
 #guard
-  let gm := (Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 true + Tensor.leaf #[1, 2] 1 2 0 true).backwardAcc #[1, 1] #[]
-  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
-  arrApproxEq (get 0) #[2, 2] && arrApproxEq (get 1) #[1, 1]
+  let gm := (Tensor.leaf #[1, 2] 1 2 0 true + Tensor.leaf #[3, 4] 1 2 1 true + Tensor.leaf #[1, 2] 1 2 0 true).backwardAcc #[1, 1] ∅
+  arrApproxEq (gm.getD 0 #[]) #[2, 2] && arrApproxEq (gm.getD 1 #[]) #[1, 1]
 #guard
-  let gm := ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 0, 0, 1] 2 2 1 true)).backwardAcc #[1, 1, 1, 1] #[]
-  let get := fun (id : Nat) => (gm.find? (fun p => p.1 == id)).map (·.2) |>.getD #[]
-  arrApproxEq (get 0) #[1, 1, 1, 1] && arrApproxEq (get 1) #[4, 4, 6, 6]
+  let gm := ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 0, 0, 1] 2 2 1 true)).backwardAcc #[1, 1, 1, 1] ∅
+  arrApproxEq (gm.getD 0 #[]) #[1, 1, 1, 1] && arrApproxEq (gm.getD 1 #[]) #[4, 4, 6, 6]
 #guard
   let gm := ((Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]).backward
-  let g := (gm.find? (fun p => p.1 == 0)).map (·.2) |>.getD #[]
+  let g := gm.getD 0 #[]
   approxEq (g[0]! + g[1]!) 0.0
 
 end Tensor

@@ -192,6 +192,6 @@ def forward (p : Params) (input target : Array Nat) (mask : Array Float) (nEmbed
   let p : Params := { wte := mk 2 2 ParamIds.wte, wpe := mk 2 2 ParamIds.wpe, lmHead := mk 2 2 ParamIds.lmHead, blocks := #[blk] }
   let loss := forward p #[0, 1] #[0, 1] #[1, 1] 2 1
   let gm := loss.backward
-  loss.shape == #[1, 1] && approxEq loss.data[0]! (-Float.log 0.5) && (gm.find? (fun e => e.1 == ParamIds.lmHead)).isSome
+  loss.shape == #[1, 1] && approxEq loss.data[0]! (-Float.log 0.5) && gm.contains ParamIds.lmHead
 
 end MicroGPT
