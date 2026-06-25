@@ -321,7 +321,7 @@ private def gradientMapAdd (gradientMap : Array (Nat × Array Float)) (id : Nat)
   | none => gradientMap.push (id, g)
 
 -- walks the gradFn DAG, accumulating each leaf's gradient into the map (shared leaves sum)
-partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
+private partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Array (Nat × Array Float)) : Array (Nat × Array Float) :=
   match t.gradFn with
   | .leaf =>
     if t.requiresGrad then gradientMapAdd gradientMap t.id incoming else gradientMap

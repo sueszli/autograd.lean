@@ -11,14 +11,14 @@ Weight loader
 ===--------------------------------------------------------------------------===
 -/
 
-def getObj (j : Json) (k : String) : IO Json := IO.ofExcept <| (j.getObjVal? k).mapError fun e => s!"missing key '{k}': {e}"
+private def getObj (j : Json) (k : String) : IO Json := IO.ofExcept <| (j.getObjVal? k).mapError fun e => s!"missing key '{k}': {e}"
 
-def asRows (j : Json) : IO (Array Float × Nat × Nat) := IO.ofExcept <| (fun rows => (rows.flatten, rows.size, if 0 < rows.size then rows[0]!.size else 0)) <$> (fromJson? j : Except String (Array (Array Float)))
+private def asRows (j : Json) : IO (Array Float × Nat × Nat) := IO.ofExcept <| (fun rows => (rows.flatten, rows.size, if 0 < rows.size then rows[0]!.size else 0)) <$> (fromJson? j : Except String (Array (Array Float)))
 
 -- Python stores linear weights `[out × in]`, `matmulFwd` wants `[in × out]`. Transpose.
-def asRowsT (j : Json) : IO (Array Float × Nat × Nat) := (fun (flat, r, c) => (transposeFlat flat r c, c, r)) <$> asRows j
+private def asRowsT (j : Json) : IO (Array Float × Nat × Nat) := (fun (flat, r, c) => (transposeFlat flat r c, c, r)) <$> asRows j
 
-def leafFrom (triple : Array Float × Nat × Nat) (id : Nat) : Tensor := Tensor.leaf triple.1 triple.2.1 triple.2.2 id true
+private def leafFrom (triple : Array Float × Nat × Nat) (id : Nat) : Tensor := Tensor.leaf triple.1 triple.2.1 triple.2.2 id true
 
 private def paramsFromJson (j : Json) : IO Params := do
   return { wte := leafFrom (← asRows (← getObj j "wte")) ParamIds.wte, wpe := leafFrom (← asRows (← getObj j "wpe")) ParamIds.wpe, lmHead := leafFrom (← asRowsT (← getObj j "lm_head")) ParamIds.lmHead, blocks := #[{ attnWq := leafFrom (← asRowsT (← getObj j "layer0.attn_wq")) (ParamIds.attnWq 0), attnWk := leafFrom (← asRowsT (← getObj j "layer0.attn_wk")) (ParamIds.attnWk 0), attnWv := leafFrom (← asRowsT (← getObj j "layer0.attn_wv")) (ParamIds.attnWv 0), attnWo := leafFrom (← asRowsT (← getObj j "layer0.attn_wo")) (ParamIds.attnWo 0), mlpFc1 := leafFrom (← asRowsT (← getObj j "layer0.mlp_fc1")) (ParamIds.mlpFc1 0), mlpFc2 := leafFrom (← asRowsT (← getObj j "layer0.mlp_fc2")) (ParamIds.mlpFc2 0) }] }

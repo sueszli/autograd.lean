@@ -62,11 +62,15 @@ theorem matmulFwd_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Ar
 theorem matmulBwdX_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : (matmulBwdX dout n m W k).size = n * k := by simp [matmulBwdX]
 theorem matmulBwdW_size {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : (matmulBwdW dout n m x k).size = k * m := by simp [matmulBwdW]
 #guard arrApproxEq (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) #[1, 4, 2, 5, 3, 6]
+#guard arrApproxEq (transposeFlat #[1, 2, 3, 4, 5, 6] 3 2) #[1, 3, 5, 2, 4, 6]
 #guard arrApproxEq (transposeFlat (transposeFlat #[1, 2, 3, 4, 5, 6] 2 3) 3 2) #[1, 2, 3, 4, 5, 6]
 #guard arrApproxEq (matmulFwd #[1, 2, 3, 4] 2 2 #[1, 2, 3, 4] 2) #[7, 10, 15, 22]
 #guard arrApproxEq (matmulFwd #[1, 2, 3, 4, 5, 6] 2 3 #[1, 2, 3, 4, 5, 6] 2) #[22, 28, 49, 64]
+#guard arrApproxEq (matmulFwd #[1, 2, 3] 1 3 #[4, 5, 6] 1) #[32]
 #guard arrApproxEq (matmulBwdX #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
+#guard arrApproxEq (matmulBwdX #[1, 2, 3, 4] 2 2 #[1, 2, 3, 4] 2) #[5, 11, 11, 25]
 #guard arrApproxEq (matmulBwdW #[1, 2, 3, 4] 2 2 #[1, 0, 0, 1] 2) #[1, 2, 3, 4]
+#guard arrApproxEq (matmulBwdW #[1, 2, 3, 4] 2 2 #[1, 2, 3, 4] 2) #[10, 14, 14, 20]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -88,7 +92,9 @@ theorem maddFlat_size {K : Type} [Add K] [Inhabited K] (a : Array K) (b : Array 
 theorem reluFlat_size (x : Array Float) : (reluFlat x).size = x.size := by simp [reluFlat]
 theorem reluBwdFlat_size (dout : Array Float) (hPre : Array Float) : (reluBwdFlat dout hPre).size = dout.size := by simp [reluBwdFlat]
 #guard arrApproxEq (maddFlat #[1, 2, 3] #[3, 4, 5]) #[4, 6, 8]
+#guard arrApproxEq (maddFlat #[1, -2, 3] #[-1, 2, -3]) #[0, 0, 0]
 #guard arrApproxEq (reluFlat #[-1, 0, 2, -3]) #[0, 0, 2, 0]
+#guard arrApproxEq (reluBwdFlat #[2, 3, 4, 5] #[-1, 0, 2, -3]) #[0, 0, 4, 0]
 #guard arrApproxEq (reluBwdFlat #[1, 1, 1, 1] #[-1, 0, 2, -3]) #[0, 0, 1, 0]
 
 /-!
@@ -147,6 +153,7 @@ theorem softmaxRowsBwd_size (aw : Array Float) (daw : Array Float) (rows : Nat) 
 #guard arrApproxEq (softmaxFlat #[0, 0, 0]) #[1.0 / 3, 1.0 / 3, 1.0 / 3]
 #guard approxEq ((softmaxFlat #[1, 2, 3]).foldl (· + ·) 0.0) 1.0
 #guard arrApproxEq (softmaxFlat #[1, 2, 3]) (softmaxFlat #[-4, -3, -2])
+#guard (softmaxFlat #[0, 1])[1]! > (softmaxFlat #[0, 1])[0]!
 #guard let sm := softmaxRows #[1, 2, 1, 0] 2 2; approxEq (sm[0]! + sm[1]!) 1.0 && approxEq (sm[2]! + sm[3]!) 1.0
 #guard arrApproxEq (softmaxRowsBwd (softmaxRows #[1, 2, 3, 4] 1 4) #[5, 5, 5, 5] 1 4 1.0) #[0, 0, 0, 0]
 
@@ -179,6 +186,7 @@ private def mergeHeadsFlat (xs : Array (Array Float)) (n nHead headDim : Nat) : 
 theorem splitHeadsFlat_count (x : Array Float) (n : Nat) (dModel : Nat) (nHead : Nat) : (splitHeadsFlat x n dModel nHead).size = nHead := by simp [splitHeadsFlat]
 theorem mergeHeadsFlat_size (xs : Array (Array Float)) (n : Nat) (nHead : Nat) (headDim : Nat) : (mergeHeadsFlat xs n nHead headDim).size = n * (nHead * headDim) := by simp [mergeHeadsFlat, Id.run]; exact nestedFold_size ..
 #guard let hs := splitHeadsFlat #[1, 2, 3, 4] 1 4 2; hs.size == 2 && arrApproxEq hs[0]! #[1, 2] && arrApproxEq hs[1]! #[3, 4]
+#guard let hs := splitHeadsFlat #[1, 2, 3, 4, 5, 6] 1 6 3; hs.size == 3 && arrApproxEq hs[0]! #[1, 2] && arrApproxEq hs[1]! #[3, 4] && arrApproxEq hs[2]! #[5, 6]
 #guard arrApproxEq (mergeHeadsFlat (splitHeadsFlat #[1, 2, 3, 4, 5, 6, 7, 8] 2 4 2) 2 2 2) #[1, 2, 3, 4, 5, 6, 7, 8]
 
 /-!
@@ -216,7 +224,7 @@ theorem gatherFlat_get (table : Array Float) (cols : Nat) (ids : Array Nat) (row
   rw [map_range_getElem! _ _ _ hbound]
   rw [show (row * cols + col) % cols = col by rw [Nat.mul_add_mod', Nat.mod_eq_of_lt hcol], show (row * cols + col) / cols = row by rw [Nat.mul_comm row cols, Nat.mul_add_div (Nat.lt_of_le_of_lt (Nat.zero_le col) hcol), Nat.div_eq_of_lt hcol, Nat.add_zero]]
 
--- gather with identity indices `[0,1,…]` returns identity
+-- gather with identity indices returns identity
 theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h : table.size = rows * cols)
     : gatherFlat table cols (Array.range rows) = table := by
   apply Array.ext
@@ -235,7 +243,9 @@ theorem gatherFlat_identity (table : Array Float) (rows : Nat) (cols : Nat) (h :
 theorem gatherFlat_size (table : Array Float) (cols : Nat) (ids : Array Nat) : (gatherFlat table cols ids).size = ids.size * cols := by simp [gatherFlat]
 theorem scatterAddFlat_size (rows : Nat) (cols : Nat) (grad : Array Float) (ids : Array Nat) : (scatterAddFlat rows cols grad ids).size = rows * cols := by simp [scatterAddFlat, Id.run]; exact nestedFold_size ..
 #guard arrApproxEq (gatherFlat #[10, 11, 20, 21, 30, 31] 2 #[2, 0]) #[30, 31, 10, 11]
+#guard arrApproxEq (gatherFlat #[10, 11, 20, 21, 30, 31] 2 #[0, 1, 2]) #[10, 11, 20, 21, 30, 31]
 #guard arrApproxEq (scatterAddFlat 3 2 #[1, 1, 2, 2, 3, 3] #[0, 0, 2]) #[3, 3, 0, 0, 3, 3]
+#guard arrApproxEq (scatterAddFlat 3 2 #[1, 2, 3, 4] #[0, 2]) #[1, 2, 0, 0, 3, 4]
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -348,14 +358,7 @@ def attnFwd (nEmbed nHead : Nat) (xPre : Array Float) (rows : Nat) (wq wk wv wo 
       let q := qs[h]!; let k := ks[h]!; let v := vs[h]!
       let kT := transposeFlat k rows headDim
       let scores := matmulFwd q rows headDim kT rows
-      let scaled : Array Float := scores.map (· * invScale)
-      let masked : Array Float := Id.run do
-        let mut acc : Array Float := Array.replicate (rows * rows) 0.0
-        for i in [0:rows] do
-          for j in [0:rows] do
-            let v := if j ≤ i then scaled[i * rows + j]! else maskValue
-            acc := acc.set! (i * rows + j) v
-        return acc
+      let masked : Array Float := (Array.range (rows * rows)).map fun idx => if idx % rows ≤ idx / rows then scores[idx]! * invScale else maskValue
       let aw := softmaxRows masked rows rows
       aws := aws.push aw
       outs := outs.push (matmulFwd aw rows rows v headDim)
@@ -383,12 +386,7 @@ def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo 
       let dawH := matmulBwdX dHead rows headDim v rows
       let dvH := matmulBwdW dHead rows headDim aw rows
       let dScaledH := softmaxRowsBwd aw dawH rows rows invSqrt
-      let dScaledMasked : Array Float := Id.run do
-        let mut acc := dScaledH
-        for i in [0:rows] do
-          for j in [0:rows] do
-            if j > i then acc := acc.set! (i * rows + j) 0.0
-        return acc
+      let dScaledMasked : Array Float := (Array.range (rows * rows)).map fun idx => if idx % rows > idx / rows then 0.0 else dScaledH[idx]!
       let dqH := matmulFwd dScaledMasked rows rows k headDim
       let dkH := matmulFwd (transposeFlat dScaledMasked rows rows) rows rows q headDim
       dqs := dqs.push dqH
@@ -419,6 +417,17 @@ def attnBwd (nEmbed nHead : Nat) (dout : Array Float) (rows : Nat) (wq wk wv wo 
        let (_, c) := attnFwd 4 2 x 2 z z z z
        let (dxPre, (dWq, dWk, dWv, dWo)) := attnBwd 4 2 dout 2 z z z z c
        arrApproxEq dxPre dout && dWq.size == 16 && dWk.size == 16 && dWv.size == 16 && dWo.size == 16
+#guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+       let z : Array Float := Array.replicate 16 0.0
+       let (out, c) := attnFwd 4 2 x 2 z z z z
+       out.size == 8 && c.attnW.size == 2 && c.q.size == 2 && c.k.size == 2 && c.v.size == 2 && c.q[0]!.size == 4 && c.attnW[0]!.size == 4 && c.outFlat.size == 8
+#guard let x : Array Float := #[0.5, -1.0, 2.0, 1.5, -0.5, 0.8, -1.2, 0.3]
+       let wq : Array Float := (Array.range 16).map fun i => Float.sin (i.toFloat * 0.5)
+       let wk : Array Float := (Array.range 16).map fun i => Float.cos (i.toFloat * 0.5)
+       let wv : Array Float := (Array.range 16).map fun i => Float.sin (i.toFloat * 0.3 + 1.0)
+       let wo : Array Float := (Array.range 16).map fun i => Float.cos (i.toFloat * 0.7)
+       let (out, _) := attnFwd 4 2 x 2 wq wk wv wo
+       !arrApproxEq out x
 
 /-!
 ===--------------------------------------------------------------------------===
@@ -465,5 +474,14 @@ def mlpBwd (dout : Array Float) (fc1 fc2 : Array Float) (c : MlpCache) : Array F
        let (_, c) := mlpFwd 4 x 2 z z
        let (dxPre, (df1, df2)) := mlpBwd dout z z c
        arrApproxEq dxPre dout && df1.size == 64 && df2.size == 64
+#guard let x : Array Float := #[1, 2, 3, 4, 5, 6, 7, 8]
+       let z : Array Float := Array.replicate 64 0.0
+       let (_, c) := mlpFwd 4 x 2 z z
+       c.hPre.size == 32 && c.h.size == 32 && c.xn.size == 8 && c.rms.size == 2 && c.hidden == 16
+#guard let x : Array Float := #[0.5, -1.0, 2.0, 1.5, -0.5, 0.8, -1.2, 0.3]
+       let fc1 : Array Float := (Array.range 64).map fun i => Float.sin (i.toFloat * 0.7)
+       let fc2 : Array Float := (Array.range 64).map fun i => Float.cos (i.toFloat * 0.5)
+       let (out, _) := mlpFwd 4 x 2 fc1 fc2
+       !arrApproxEq out x
 
 end Autograd

@@ -8,8 +8,6 @@ AdamW
 ===--------------------------------------------------------------------------===
 -/
 
-def zerosLike (t : Tensor) : Array Float := Array.replicate t.data.size 0.0
-
 private def lookup (a : Array (Nat × Array Float)) (id : Nat) (fallback : Array Float) : Array Float :=
   match a.find? (fun (i, _) => i = id) with
   | some (_, x) => x
@@ -20,7 +18,7 @@ private def upsert (a : Array (Nat × Array Float)) (id : Nat) (x : Array Float)
   | some i => a.set! i (id, x)
   | none => a.push (id, x)
 
--- `beta1`, `beta2` and `lr0` (in the model's Config) plus init `σ` were grid-searched for bit-exact parity with the Python reference.
+-- adam params grid-searched for bit-exact parity with the Python reference
 private def adamWBuf (step : Nat) (lr : Float) (p g m v : Array Float) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Array Float × Array Float × Array Float :=
   let t := step.toFloat
   let invBias1 := 1.0 / (1.0 - Float.pow beta1 t)
@@ -35,8 +33,8 @@ private def adamWBuf (step : Nat) (lr : Float) (p g m v : Array Float) (beta1 : 
   let np : Array Float := (Array.range n).map fun i => p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
-def stepOne (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (m v : Array (Nat × Array Float)) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
-  let z := zerosLike t
+private def stepOne (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Array (Nat × Array Float)) (m v : Array (Nat × Array Float)) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Tensor × Array (Nat × Array Float) × Array (Nat × Array Float) :=
+  let z := Array.replicate t.data.size 0.0
   let g := lookup gradientMap t.id z
   let mi := lookup m t.id z
   let vi := lookup v t.id z
@@ -51,7 +49,7 @@ instance : Weights (Array Tensor) where
   mapM f a := a.mapM f
 
 def zeroMoments {α : Type} [Weights α] (p : α) : Array (Nat × Array Float) × Array (Nat × Array Float) :=
-  let collect : Tensor → StateM (Array (Nat × Array Float)) Tensor := fun t => do modify (·.push (t.id, zerosLike t)); pure t
+  let collect : Tensor → StateM (Array (Nat × Array Float)) Tensor := fun t => do modify (·.push (t.id, Array.replicate t.data.size 0.0)); pure t
   let entries := ((Weights.mapM collect p).run #[]).2
   (entries, entries)
 
@@ -180,11 +178,9 @@ theorem upsert_size_fresh (a : Array (Nat × Array Float)) (id : Nat) (x : Array
   rw [hnone]; simp
 
 -- tests
-theorem zerosLike_size (t : Tensor) : (zerosLike t).size = t.data.size := by simp [zerosLike]
 theorem adamWBuf_param_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).1.size = p.size := by simp [adamWBuf]
 theorem adamWBuf_m_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).2.1.size = p.size := by simp [adamWBuf]
 theorem adamWBuf_v_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
-#guard arrApproxEq (zerosLike (Tensor.leaf #[1, 2, 3] 1 3 0 true)) #[0, 0, 0]
 #guard arrApproxEq (lookup #[(5, #[1, 2]), (7, #[3, 4])] 7 #[0, 0]) #[3, 4]
 #guard arrApproxEq (lookup #[(5, #[1, 2])] 9 #[0, 0]) #[0, 0]
 #guard let a := upsert #[(5, #[1, 2])] 5 #[9, 9]; a.size == 1 && arrApproxEq (lookup a 5 #[]) #[9, 9]
