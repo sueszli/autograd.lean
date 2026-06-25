@@ -3,3 +3,4 @@ precommit:
 	printf '#!/bin/sh\nmake precommit\n' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 	lake build
 	lake exe parity
+	pkill -f 'serve.*autograd\.lean' || true  # restart vscode's lean lsp to reload fresh oleans
