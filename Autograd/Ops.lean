@@ -8,15 +8,19 @@ Matmul
 ===--------------------------------------------------------------------------===
 -/
 
+-- generic over `K` so one definition both executes (`Float`) and is tested/proved on exact `ℚ`: Lean has no float reasoning, so proofs need a `CommRing`.
 def transposeFlat {K : Type} [Inhabited K] (x : Array K) (r : Nat) (c : Nat) : Array K :=
   (Array.range (c * r)).map fun k => x[(k % r) * c + (k / r)]!
 
+-- forward: Y = X·W
 def matmulFwd {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (x : Array K) (n : Nat) (k : Nat) (W : Array K) (m : Nat) : Array K :=
   (Array.range (n * m)).map fun idx => (Array.range k).foldl (fun s kk => s + x[(idx / m) * k + kk]! * W[kk * m + (idx % m)]!) (0 : K)
 
+-- backward to the input: dout·Wᵀ
 def matmulBwdX {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (W : Array K) (k : Nat) : Array K :=
   (Array.range (n * k)).map fun idx => (Array.range m).foldl (fun s j => s + dout[(idx / k) * m + j]! * W[(idx % k) * m + j]!) (0 : K)
 
+-- backward to the weights: Xᵀ·dout
 def matmulBwdW {K : Type} [Add K] [Mul K] [Zero K] [Inhabited K] (dout : Array K) (n : Nat) (m : Nat) (x : Array K) (k : Nat) : Array K :=
   (Array.range (k * m)).map fun idx => (Array.range n).foldl (fun s i => s + x[i * k + (idx / m)]! * dout[i * m + (idx % m)]!) (0 : K)
 
