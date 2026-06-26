@@ -25,11 +25,26 @@ def arrMaxDiff (a : Array Float) (b : Array Float) : Float := (Array.zipWith (fu
 
 /-!
 ===--------------------------------------------------------------------------===
+Pseudo-random numbers
+===--------------------------------------------------------------------------===
+-/
+
+def rngNext (s : UInt64) : UInt64 := s * 6364136223846793005 + 1442695040888963407
+
+def rngFloat : StateM UInt64 Float := do let s := rngNext (← get); set s; pure ((s >>> 11).toNat.toFloat / (1 <<< 53 : Nat).toFloat)
+
+-- tests
+#guard rngNext 1 != 1
+#guard let a : Float := rngFloat.run' 7; let b : Float := rngFloat.run' 7; a == b
+#guard let x : Float := rngFloat.run' 7; 0.0 ≤ x && x < 1.0
+
+/-!
+===--------------------------------------------------------------------------===
 Progress bar
 ===--------------------------------------------------------------------------===
 -/
 
-def tqdm (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
+private def tqdmBar (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
   let width := 30
   let filled := (cur * width) / total
   let bar := ("".pushn '█' filled).pushn ' ' (width - filled)
@@ -39,9 +54,23 @@ def tqdm (cur : Nat) (total : Nat) (elapsedMs : Nat) : String :=
   let fmt := fun (ms : Nat) => let s := ms / 1000; let r := s % 60; s!"{s / 60}:" ++ (if r < 10 then s!"0{r}" else s!"{r}")
   s!"{pct}%|{bar}| {cur}/{total} [{fmt elapsedMs}<{fmt etaMs}, {rate}it/s]"
 
+-- redraw
+def tqdmTick (startMs : Nat) (cur : Nat) (total : Nat) : IO Unit := do
+  let elapsedMs := (← IO.monoMsNow) - startMs
+  IO.print s!"\r{tqdmBar cur total elapsedMs}  "
+  (← IO.getStdout).flush
+
+-- report wall-clock time since startMs
+def tqdmDone (startMs : Nat) : IO Unit := do
+  let ms := (← IO.monoMsNow) - startMs
+  let frac := ms % 1000
+  let pad := if frac < 10 then "00" else if frac < 100 then "0" else ""
+  IO.println ""
+  IO.println s!"total time: {ms / 1000}.{pad}{frac}s"
+
 -- tests
-#guard "0%|".isPrefixOf (tqdm 0 10 0)
-#guard "50%|".isPrefixOf (tqdm 5 10 0)
-#guard "100%|".isPrefixOf (tqdm 10 10 1000)
+#guard "0%|".isPrefixOf (tqdmBar 0 10 0)
+#guard "50%|".isPrefixOf (tqdmBar 5 10 0)
+#guard "100%|".isPrefixOf (tqdmBar 10 10 1000)
 
 end Autograd

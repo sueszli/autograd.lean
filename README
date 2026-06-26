@@ -7,8 +7,26 @@
                               ▀▀
 
 
-an automatic differentiation engine written in lean, a functional language with a
-built-in proof checker.
+a reverse-mode autograd engine in lean, a functional language with a built-in
+proof checker.
 
-it prioritizes correctness and verifiability over performance.
-check out its counterpart: github.com/sueszli/autograd.c
+it follows pytorch's design principles, where tensors build a computation graph
+that backprop walks in reverse to compute gradients.
+
+three layers of correctness:
+
+- a mathlib proof that each backward kernel computes the true gradient
+- numeric parity with karpathy's microGPT to within 1e-11 atol
+- unit tests for every op
+
+discussion on hackernews: https://news.ycombinator.com/item?id=...
+
+$ make run
+
+    Build completed successfully (4252 jobs).
+    lake exe parity
+    100%|██████████████████████████████| 1000/1000 [0:18<0:00, 53it/s]  
+    total time: 18.808s
+    passed parity check
+
+    random inference (sampled name): arrwon

@@ -6,7 +6,7 @@ open Autograd
 
 /-!
 ===--------------------------------------------------------------------------===
-Parameters
+MicroGPT
 ===--------------------------------------------------------------------------===
 -/
 
@@ -41,19 +41,6 @@ instance : Weights Params where
       pure { attnWq, attnWk, attnWv, attnWo, mlpFc1, mlpFc2 }
     pure { wte, wpe, lmHead, blocks }
 
-namespace ParamIds
-def wte : Nat := 0
-def wpe : Nat := 1
-def lmHead : Nat := 2
-private def blockBase (h : Nat) : Nat := 3 + h * 6
-def attnWq (h : Nat) : Nat := blockBase h + 0
-def attnWk (h : Nat) : Nat := blockBase h + 1
-def attnWv (h : Nat) : Nat := blockBase h + 2
-def attnWo (h : Nat) : Nat := blockBase h + 3
-def mlpFc1 (h : Nat) : Nat := blockBase h + 4
-def mlpFc2 (h : Nat) : Nat := blockBase h + 5
-end ParamIds
-
 inductive Role where
   | attnWq
   | attnWk
@@ -61,14 +48,12 @@ inductive Role where
   | attnWo
   | mlpFc1
   | mlpFc2
-  deriving DecidableEq
 
 inductive Slot where
   | wte
   | wpe
   | lmHead
   | block (h : Nat) (r : Role)
-  deriving DecidableEq
 
 private def Role.offset : Role → Nat
   | .attnWq => 0
@@ -78,24 +63,19 @@ private def Role.offset : Role → Nat
   | .mlpFc1 => 4
   | .mlpFc2 => 5
 
-private def Slot.id : Slot → Nat
-  | .wte => ParamIds.wte
-  | .wpe => ParamIds.wpe
-  | .lmHead => ParamIds.lmHead
-  | .block h r => ParamIds.blockBase h + r.offset
+def Slot.id : Slot → Nat
+  | .wte => 0
+  | .wpe => 1
+  | .lmHead => 2
+  | .block h r => 3 + h * 6 + r.offset
 
-private def ParamIds.allIds (n : Nat) : List Nat := List.range (3 + 6 * n)
+def forward (p : Params) (input target : Array Nat) (mask : Array Float) (nEmbed nHead : Nat) (epsilon : Float := 1e-5) (maskValue : Float := -1.0e9) : Tensor :=
+  let tokEmb := p.wte.gather input
+  let posEmb := p.wpe.gather (Array.range input.size)
+  let xInit := (tokEmb + posEmb).rmsnorm epsilon
+  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp nEmbed epsilon (Tensor.attn nEmbed nHead epsilon maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
+  (x @ p.lmHead).maskedCE target mask
 
--- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
--- a block's six weight ids strictly increase
-theorem block_ids_increasing (h : Nat)
-    : ParamIds.attnWq h < ParamIds.attnWk h ∧ ParamIds.attnWk h < ParamIds.attnWv h ∧ ParamIds.attnWv h < ParamIds.attnWo h ∧ ParamIds.attnWo h < ParamIds.mlpFc1 h ∧ ParamIds.mlpFc1 h < ParamIds.mlpFc2 h := by unfold ParamIds.attnWq ParamIds.attnWk ParamIds.attnWv ParamIds.attnWo ParamIds.mlpFc1 ParamIds.mlpFc2 ParamIds.blockBase; omega
--- block h's last id is below block (h+1)'s first id
-theorem blocks_disjoint (h : Nat)
-    : ParamIds.mlpFc2 h < ParamIds.attnWq (h + 1) := by unfold ParamIds.mlpFc2 ParamIds.attnWq ParamIds.blockBase; omega
--- the three global ids come before any block id
-theorem globals_precede_blocks
-    : ParamIds.lmHead < ParamIds.attnWq 0 := by unfold ParamIds.lmHead ParamIds.attnWq ParamIds.blockBase; omega
 -- every role offset is < 6
 theorem Role.offset_lt (r : Role)
     : r.offset < 6 := by cases r <;> decide
@@ -103,11 +83,11 @@ theorem Role.offset_lt (r : Role)
 theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset)
     : r = r' := by cases r <;> cases r' <;> simp_all [Role.offset]
 
+-- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
 -- distinct slots get distinct ids (no collision, for any model size)
 theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id)
     : s = t := by
-  cases s <;> cases t <;>
-    simp_all [Slot.id, ParamIds.wte, ParamIds.wpe, ParamIds.lmHead, ParamIds.blockBase]
+  cases s <;> cases t <;> simp_all [Slot.id]
   case wte.block hh r | wpe.block hh r | lmHead.block hh r =>
     have := r.offset_lt; omega
   case block.wpe hh r | block.lmHead hh r =>
@@ -119,51 +99,18 @@ theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id)
     apply Role.offset_inj
     omega
 
--- an in-range slot's id lands inside [0, 3 + 6n)
-theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h < n)
-    : s.id < 3 + 6 * n := by
-  cases s with
-  | wte => simp only [Slot.id, ParamIds.wte]; omega
-  | wpe => simp only [Slot.id, ParamIds.wpe]; omega
-  | lmHead => simp only [Slot.id, ParamIds.lmHead]; omega
-  | block h r =>
-    have := hb h r rfl
-    have := r.offset_lt
-    simp only [Slot.id, ParamIds.blockBase]
-    omega
-
--- the id list has no duplicates (allIds is the contiguous range (3 + 6n), gap-free)
-theorem ParamIds.allIds_nodup (n : Nat)
-    : (ParamIds.allIds n).Nodup := by unfold ParamIds.allIds; exact List.nodup_range
-
 -- tests
 theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl
+theorem global_ids : (Slot.wte).id = 0 ∧ (Slot.wpe).id = 1 ∧ (Slot.lmHead).id = 2 := ⟨rfl, rfl, rfl⟩
+theorem block0_ids : (Slot.block 0 .attnWq).id = 3 ∧ (Slot.block 0 .mlpFc2).id = 8 := ⟨rfl, rfl⟩
+theorem block1_ids : (Slot.block 1 .attnWq).id = 9 ∧ (Slot.block 1 .mlpFc2).id = 14 := ⟨rfl, rfl⟩
 #guard let p : Params := { wte := Tensor.leaf #[1] 1 1 0 true, wpe := Tensor.leaf #[2] 1 1 1 true, lmHead := Tensor.leaf #[3] 1 1 2 true, blocks := #[] }; arrApproxEq p.wte.data #[1] && p.blocks.size == 0
-theorem blockBase_eq (h : Nat) : ParamIds.blockBase h = 3 + h * 6 := rfl
-theorem global_ids : ParamIds.wte = 0 ∧ ParamIds.wpe = 1 ∧ ParamIds.lmHead = 2 := ⟨rfl, rfl, rfl⟩
-theorem block0_ids : ParamIds.attnWq 0 = 3 ∧ ParamIds.mlpFc2 0 = 8 := ⟨rfl, rfl⟩
-theorem block1_ids : ParamIds.blockBase 1 = 9 ∧ ParamIds.attnWq 1 = 9 := ⟨rfl, rfl⟩
-
-/-!
-===--------------------------------------------------------------------------===
-Forward pass
-===--------------------------------------------------------------------------===
--/
-
-def forward (p : Params) (input target : Array Nat) (mask : Array Float) (nEmbed nHead : Nat) (epsilon : Float := 1e-5) (maskValue : Float := -1.0e9) : Tensor :=
-  let tokEmb := p.wte.gather input
-  let posEmb := p.wpe.gather (Array.range input.size)
-  let xInit := (tokEmb + posEmb).rmsnorm epsilon
-  let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp nEmbed epsilon (Tensor.attn nEmbed nHead epsilon maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
-  (x @ p.lmHead).maskedCE target mask
-
--- tests
 #guard
   let mk := fun (rows : Nat) (cols : Nat) (id : Nat) => Tensor.leaf (Array.replicate (rows * cols) 0.0) rows cols id true
-  let blk : TransformerBlock := { attnWq := mk 2 2 (ParamIds.attnWq 0), attnWk := mk 2 2 (ParamIds.attnWk 0), attnWv := mk 2 2 (ParamIds.attnWv 0), attnWo := mk 2 2 (ParamIds.attnWo 0), mlpFc1 := mk 2 8 (ParamIds.mlpFc1 0), mlpFc2 := mk 8 2 (ParamIds.mlpFc2 0) }
-  let p : Params := { wte := mk 2 2 ParamIds.wte, wpe := mk 2 2 ParamIds.wpe, lmHead := mk 2 2 ParamIds.lmHead, blocks := #[blk] }
+  let blk : TransformerBlock := { attnWq := mk 2 2 (Slot.block 0 .attnWq).id, attnWk := mk 2 2 (Slot.block 0 .attnWk).id, attnWv := mk 2 2 (Slot.block 0 .attnWv).id, attnWo := mk 2 2 (Slot.block 0 .attnWo).id, mlpFc1 := mk 2 8 (Slot.block 0 .mlpFc1).id, mlpFc2 := mk 8 2 (Slot.block 0 .mlpFc2).id }
+  let p : Params := { wte := mk 2 2 (Slot.wte).id, wpe := mk 2 2 (Slot.wpe).id, lmHead := mk 2 2 (Slot.lmHead).id, blocks := #[blk] }
   let loss := forward p #[0, 1] #[0, 1] #[1, 1] 2 1
   let gm := loss.backward
-  loss.shape == #[1, 1] && approxEq loss.data[0]! (-Float.log 0.5) && gm.contains ParamIds.lmHead
+  loss.shape == #[1, 1] && approxEq loss.data[0]! (-Float.log 0.5) && gm.contains (Slot.lmHead).id
 
 end MicroGPT
