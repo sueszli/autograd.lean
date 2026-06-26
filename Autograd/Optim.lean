@@ -10,7 +10,9 @@ AdamW
 -/
 
 -- grid-searched params for bit-exact parity with the Python reference
-private def adamWBuf (step : Nat) (lr : Float) (p g m v : Array Float) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Array Float × Array Float × Array Float :=
+private def adamWBuf (step : Nat) (lr : Float) (p g m v : Array Float) : Array Float × Array Float × Array Float :=
+  let beta1 : Float := 0.85
+  let beta2 : Float := 0.99
   let t := step.toFloat
   let invBias1 := 1.0 / (1.0 - Float.pow beta1 t)
   let invBias2 := 1.0 / (1.0 - Float.pow beta2 t)
@@ -24,37 +26,31 @@ private def adamWBuf (step : Nat) (lr : Float) (p g m v : Array Float) (beta1 : 
   let np : Array Float := (Array.range n).map fun i => p[i]! - lrScaled * nm[i]! / (Float.pow (nv[i]! * invBias2) 0.5 + eps)
   (np, nm, nv)
 
-private def stepOne (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Std.HashMap Nat (Array Float)) (m : Std.HashMap Nat (Array Float)) (v : Std.HashMap Nat (Array Float)) (beta1 : Float := 0.85) (beta2 : Float := 0.99) : Tensor × Std.HashMap Nat (Array Float) × Std.HashMap Nat (Array Float) :=
+private def stepOne (step : Nat) (lr : Float) (t : Tensor) (gradientMap : Std.HashMap Nat (Array Float)) (mv : Std.HashMap Nat (Array Float × Array Float)) : Tensor × Std.HashMap Nat (Array Float × Array Float) :=
   let z := Array.replicate t.data.size 0.0
   let g := gradientMap.getD t.id z
-  let mi := m.getD t.id z
-  let vi := v.getD t.id z
-  let (p', m', v') := adamWBuf step lr t.data g mi vi beta1 beta2
-  ({ t with data := p' }, m.insert t.id m', v.insert t.id v')
+  let (mi, vi) := mv.getD t.id (z, z)
+  let (p', m', v') := adamWBuf step lr t.data g mi vi
+  ({ t with data := p' }, mv.insert t.id (m', v'))
 
--- a model is `Weights` if its tensors can be traversed structure-preservingly; the optimizer works on any such type.
+-- this type requires ability to traverse tensors while preserving structure
 class Weights (α : Type) where
-  mapM : {M : Type → Type} → [Monad M] → (Tensor → M Tensor) → α → M α
+  mapM : {σ : Type} → (Tensor → StateM σ Tensor) → α → StateM σ α
 
-instance : Weights (Array Tensor) where
-  mapM f a := a.mapM f
+namespace AdamW
 
-def zeroMoments {α : Type} [Weights α] (p : α) : Std.HashMap Nat (Array Float) × Std.HashMap Nat (Array Float) :=
-  let collect : Tensor → StateM (Std.HashMap Nat (Array Float)) Tensor := fun t => do modify (·.insert t.id (Array.replicate t.data.size 0.0)); pure t
-  let entries := ((Weights.mapM collect p).run ∅).2
-  (entries, entries)
+def init {α : Type} [Weights α] (p : α) : Std.HashMap Nat (Array Float × Array Float) :=
+  let collect : Tensor → StateM (Std.HashMap Nat (Array Float × Array Float)) Tensor := fun t => do let z := Array.replicate t.data.size 0.0; modify (·.insert t.id (z, z)); pure t
+  ((Weights.mapM collect p).run ∅).2
 
-def adamWStep {α : Type} [Weights α] (step : Nat) (p : α) (m : Std.HashMap Nat (Array Float)) (v : Std.HashMap Nat (Array Float)) (gradientMap : Std.HashMap Nat (Array Float)) (numSteps : Nat := 1000) (lr0 : Float := 0.01) : α × Std.HashMap Nat (Array Float) × Std.HashMap Nat (Array Float) :=
+def step {α : Type} [Weights α] (step : Nat) (p : α) (mv : Std.HashMap Nat (Array Float × Array Float)) (gradientMap : Std.HashMap Nat (Array Float)) (numSteps : Nat := 1000) (lr0 : Float := 0.01) : α × Std.HashMap Nat (Array Float × Array Float) :=
   let progress : Float := if numSteps = 0 then 0.0 else (step - 1).toFloat / numSteps.toFloat
   let lrRaw := lr0 * (1.0 - progress)
   let lr := if lrRaw < 0.0 then 0.0 else lrRaw
-  let upd : Tensor → StateM (Std.HashMap Nat (Array Float) × Std.HashMap Nat (Array Float)) Tensor := fun t => do
-    let (m, v) ← get
-    let (t', m', v') := stepOne step lr t gradientMap m v
-    set (m', v')
-    pure t'
-  let (p', s) := (Weights.mapM upd p).run (m, v)
-  (p', s.1, s.2)
+  let upd : Tensor → StateM (Std.HashMap Nat (Array Float × Array Float)) Tensor := fun t => modifyGet (stepOne step lr t gradientMap)
+  (Weights.mapM upd p).run mv
+
+end AdamW
 
 -- tests
 theorem adamWBuf_param_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).1.size = p.size := by simp [adamWBuf]
@@ -62,8 +58,8 @@ theorem adamWBuf_m_size (step : Nat) (lr : Float) (p : Array Float) (g : Array F
 theorem adamWBuf_v_size (step : Nat) (lr : Float) (p : Array Float) (g : Array Float) (m : Array Float) (v : Array Float) : (adamWBuf step lr p g m v).2.2.size = p.size := by simp [adamWBuf]
 #guard let (np, nm, nv) := adamWBuf 1 0.1 #[1.0] #[2.0] #[0.0] #[0.0]; approxEq nm[0]! 0.3 && approxEq nv[0]! 0.04 && approxEq np[0]! 0.9 1e-6
 #guard let (np, nm, nv) := adamWBuf 1 0.1 #[5.0, -3.0] #[0.0, 0.0] #[0.0, 0.0] #[0.0, 0.0]; arrApproxEq np #[5.0, -3.0] && arrApproxEq nm #[0, 0] && arrApproxEq nv #[0, 0]
-#guard let (t', _, _) := stepOne 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) ∅ ∅ ∅; arrApproxEq t'.data #[5.0, -3.0]
-#guard let ws := #[Tensor.leaf #[5.0, -3.0] 1 2 0 true, Tensor.leaf #[1.0] 1 1 1 true]; (zeroMoments ws).1.size == 2 && (zeroMoments ws).2.size == 2
-#guard let ws := #[Tensor.leaf #[5.0, -3.0] 1 2 0 true]; let (m, v) := zeroMoments ws; let (ws', _, _) := adamWStep 1 ws m v ∅; arrApproxEq ws'[0]!.data #[5.0, -3.0]
+#guard let (t', _) := stepOne 1 0.1 (Tensor.leaf #[5.0, -3.0] 1 2 0 true) ∅ ∅; arrApproxEq t'.data #[5.0, -3.0]
+#guard let g := (∅ : Std.HashMap Nat (Array Float)).insert 0 #[2.0]; let (t', mv') := stepOne 1 0.1 (Tensor.leaf #[1.0] 1 1 0 true) g ∅; let (m, v) := mv'.getD 0 ((#[], #[]) : Array Float × Array Float); approxEq t'.data[0]! 0.9 1e-6 && arrApproxEq m #[0.3] && arrApproxEq v #[0.04]
+#guard let g := (∅ : Std.HashMap Nat (Array Float)).insert 0 #[2.0, 2.0]; let (t', _) := stepOne 1 0.1 (Tensor.leaf #[1.0, 1.0] 1 2 0 true) g ∅; arrApproxEq t'.data #[0.9, 0.9] 1e-6
 
 end Autograd

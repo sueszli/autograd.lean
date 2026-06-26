@@ -307,25 +307,15 @@ the `gradientMap` evolves as the walk reaches each leaf, last line is the return
   {0 ↦ #[2,2], 1 ↦ #[1,1]}      -- reached a again (id 0): already present, so sum -> [2,2]
 
 Each `#[1,1]` is the gradient of that tensor's `.data` (same length).
-`gradientMapAdd` sums into an entry if its `id` is already present, else inserts.
-
-The optimizer pulls a weight's gradient out of the final map by its `id`:
-
-  gradientMap.getD a.id z       -- a.id = 0 -> #[2,2]
-  gradientMap.getD b.id z       -- b.id = 1 -> #[1,1]
+Reaching a leaf sums its gradient into the existing entry for that `id`, or inserts a new one.
 ===--------------------------------------------------------------------------===
 -/
 
-private def gradientMapAdd (gradientMap : Std.HashMap Nat (Array Float)) (id : Nat) (g : Array Float) : Std.HashMap Nat (Array Float) :=
-  match gradientMap[id]? with
-  | some prev => gradientMap.insert id (maddFlat prev g)
-  | none => gradientMap.insert id g
-
--- walks the gradFn DAG, accumulating each leaf's gradient into the map (shared leaves sum)
+-- walks the gradFn DAG, accumulating each leaf's gradient into the map. shared leaves sum.
 private partial def backwardAcc (t : Tensor) (incoming : Array Float) (gradientMap : Std.HashMap Nat (Array Float)) : Std.HashMap Nat (Array Float) :=
   match t.gradFn with
   | .leaf =>
-    if t.requiresGrad then gradientMapAdd gradientMap t.id incoming else gradientMap
+    if t.requiresGrad then gradientMap.alter t.id (fun | some prev => some (maddFlat prev incoming) | none => some incoming) else gradientMap
   | .addOp a b =>
     let gradientMap := a.backwardAcc incoming gradientMap
     b.backwardAcc incoming gradientMap

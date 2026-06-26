@@ -62,15 +62,13 @@ def main : IO Unit := do
   let refP ← paramsFromJson (← getObj j "final_weights")
 
   let mut p := initP
-  let (m0, v0) := zeroMoments initP
-  let mut m := m0
-  let mut v := v0
+  let mut mv := AdamW.init initP
   let startMs ← IO.monoMsNow
   let stdout ← IO.getStdout
   for step in [0:numSteps] do
     let lossT := forward p inputs[step]! targets[step]! masks[step]! nEmbed nHead
-    let (p', m', v') := adamWStep (step + 1) p m v lossT.backward
-    p := p'; m := m'; v := v'
+    let (p', mv') := AdamW.step (step + 1) p mv lossT.backward
+    p := p'; mv := mv'
     let elapsed := (← IO.monoMsNow) - startMs
     IO.print s!"\r{tqdm (step + 1) numSteps elapsed}  "
     stdout.flush
@@ -78,19 +76,19 @@ def main : IO Unit := do
 
   let atol : Float := 1e-11
   let atolStr := "1e-11"
-  -- O(n) repeated pushes, but the explicit per-weight lines document the parameter layout
-  let pairs : Array (String × Tensor × Tensor) := Id.run do
-    let mut a : Array (String × Tensor × Tensor) := #[("wte", p.wte, refP.wte), ("wpe", p.wpe, refP.wpe), ("lm_head", p.lmHead, refP.lmHead)]
-    for h in [0:nLayer] do
+  let pairs : Array (String × Tensor × Tensor) :=
+    #[("wte", p.wte, refP.wte), ("wpe", p.wpe, refP.wpe), ("lm_head", p.lmHead, refP.lmHead)] ++
+    (Array.range nLayer).flatMap fun h =>
       let b := p.blocks[h]!
       let r := refP.blocks[h]!
-      a := a.push (s!"layer{h}.attn_wq", b.attnWq, r.attnWq)
-      a := a.push (s!"layer{h}.attn_wk", b.attnWk, r.attnWk)
-      a := a.push (s!"layer{h}.attn_wv", b.attnWv, r.attnWv)
-      a := a.push (s!"layer{h}.attn_wo", b.attnWo, r.attnWo)
-      a := a.push (s!"layer{h}.mlp_fc1", b.mlpFc1, r.mlpFc1)
-      a := a.push (s!"layer{h}.mlp_fc2", b.mlpFc2, r.mlpFc2)
-    return a
+      #[
+        (s!"layer{h}.attn_wq", b.attnWq, r.attnWq),
+        (s!"layer{h}.attn_wk", b.attnWk, r.attnWk),
+        (s!"layer{h}.attn_wv", b.attnWv, r.attnWv),
+        (s!"layer{h}.attn_wo", b.attnWo, r.attnWo),
+        (s!"layer{h}.mlp_fc1", b.mlpFc1, r.mlpFc1),
+        (s!"layer{h}.mlp_fc2", b.mlpFc2, r.mlpFc2)
+      ]
   let failures : Array (String × Float) := pairs.filterMap fun (label, a, b) =>
     let mx := arrMaxDiff a.data b.data
     if mx > atol then some (label, mx) else none

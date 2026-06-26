@@ -84,12 +84,7 @@ private def Slot.id : Slot → Nat
   | .lmHead => ParamIds.lmHead
   | .block h r => ParamIds.blockBase h + r.offset
 
-private def ParamIds.blockIds (h : Nat) : List Nat :=
-  [ParamIds.attnWq h, ParamIds.attnWk h, ParamIds.attnWv h, ParamIds.attnWo h, ParamIds.mlpFc1 h, ParamIds.mlpFc2 h]
-
-private def ParamIds.allIds : Nat → List Nat
-  | 0 => [ParamIds.wte, ParamIds.wpe, ParamIds.lmHead]
-  | n + 1 => ParamIds.allIds n ++ ParamIds.blockIds n
+private def ParamIds.allIds (n : Nat) : List Nat := List.range (3 + 6 * n)
 
 -- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
 -- a block's six weight ids strictly increase
@@ -137,32 +132,9 @@ theorem Slot.id_lt (s : Slot) (n : Nat) (hb : ∀ h r, s = Slot.block h r → h 
     simp only [Slot.id, ParamIds.blockBase]
     omega
 
--- range (m+6) = range m ++ [m, …, m+5]
-theorem rangeAddSix (m : Nat)
-    : List.range (m + 6) = List.range m ++ [m, m + 1, m + 2, m + 3, m + 4, m + 5] := by rw [List.range_add]; rfl
-
--- the assigned ids are exactly the contiguous range (3 + 6n) (gap-free)
-theorem ParamIds.allIds_eq_range (n : Nat)
-    : ParamIds.allIds n = List.range (3 + 6 * n) := by
-  induction n with
-  | zero => rfl
-  | succ k ih =>
-    unfold ParamIds.allIds
-    rw [ih]
-    have e1 : 3 + 6 * (k + 1) = (3 + 6 * k) + 6 := by omega
-    rw [e1, rangeAddSix]
-    simp only [ParamIds.blockIds, ParamIds.attnWq, ParamIds.attnWk, ParamIds.attnWv, ParamIds.attnWo, ParamIds.mlpFc1, ParamIds.mlpFc2, ParamIds.blockBase]
-    have h0 : 3 + k * 6 + 0 = 3 + 6 * k := by omega
-    have h1 : 3 + k * 6 + 1 = 3 + 6 * k + 1 := by omega
-    have h2 : 3 + k * 6 + 2 = 3 + 6 * k + 2 := by omega
-    have h3 : 3 + k * 6 + 3 = 3 + 6 * k + 3 := by omega
-    have h4 : 3 + k * 6 + 4 = 3 + 6 * k + 4 := by omega
-    have h5 : 3 + k * 6 + 5 = 3 + 6 * k + 5 := by omega
-    rw [h0, h1, h2, h3, h4, h5]
-
--- the id list has no duplicates
+-- the id list has no duplicates (allIds is the contiguous range (3 + 6n), gap-free)
 theorem ParamIds.allIds_nodup (n : Nat)
-    : (ParamIds.allIds n).Nodup := by rw [ParamIds.allIds_eq_range]; exact List.nodup_range
+    : (ParamIds.allIds n).Nodup := by unfold ParamIds.allIds; exact List.nodup_range
 
 -- tests
 theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl

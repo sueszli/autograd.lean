@@ -12,4 +12,3 @@ built-in proof checker.
 
 it prioritizes correctness and verifiability over performance.
 check out its counterpart: github.com/sueszli/autograd.c
-
