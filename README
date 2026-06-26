@@ -19,9 +19,9 @@ three layers of correctness:
 - numeric parity with karpathy's microGPT to within 1e-11 atol
 - unit tests for every op
 
-discussion on hackernews: https://news.ycombinator.com/item?id=...
+usage:
 
-$ make run
+    $ make run
 
     Build completed successfully (4252 jobs).
     lake exe parity
@@ -30,3 +30,9 @@ $ make run
     passed parity check
 
     inference (random sampled name): arrwon
+
+also see:
+
+- discussion on hackernews: https://news.ycombinator.com/item?id=...
+- counterpart in c: https://github.com/sueszli/autograd.c
+- original microgpt implementation: https://karpathy.github.io/2026/02/12/microgpt/
