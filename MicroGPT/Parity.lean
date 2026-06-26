@@ -25,7 +25,7 @@ Inference
 ===--------------------------------------------------------------------------===
 -/
 
--- forward without the cross-entropy head: next-token logits, shape seqLen x vocab
+-- forward without the cross-entropy head
 private def logits (p : Params) (input : Array Nat) (nEmbed : Nat) (nHead : Nat) (epsilon : Float := 1e-5) (maskValue : Float := -1.0e9) : Tensor :=
   let tokEmb := p.wte.gather input
   let posEmb := p.wpe.gather (Array.range input.size)
@@ -33,7 +33,7 @@ private def logits (p : Params) (input : Array Nat) (nEmbed : Nat) (nHead : Nat)
   let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp nEmbed epsilon (Tensor.attn nEmbed nHead epsilon maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
   x @ p.lmHead
 
--- sample a token from the softmax over one logits row (inverse-CDF over the trained distribution)
+-- sample a token
 private def sampleRow (t : Tensor) (row : Nat) : StateM UInt64 Nat := do
   let c := t.cols
   let base := row * c
@@ -50,7 +50,7 @@ private def sampleRow (t : Tensor) (row : Nat) : StateM UInt64 Nat := do
     if u < acc then pick := j; break
   return pick
 
--- render tokens 0..25 as letters a..z
+-- numbers to characters
 private def decode (boundary : Nat) (tokens : Array Nat) : String := tokens.foldl (init := "") fun s i => if i == boundary then s else s.push (Char.ofNat ('a'.toNat + i))
 
 /-!
@@ -81,6 +81,7 @@ def main : IO Unit := do
   let initP ← paramsFromJson (← jsonField j "init_weights")
   let refP ← paramsFromJson (← jsonField j "final_weights")
 
+  -- train
   let mut p := initP
   let mut mv := AdamW.init initP
   let startMs ← IO.monoMsNow
@@ -91,6 +92,7 @@ def main : IO Unit := do
     tqdmTick startMs (step + 1) numSteps
   tqdmDone startMs
 
+  -- parity
   let atol : Float := (10.0 : Float) ^ (-(11 : Float))
   let pairs := diffParams p refP nLayer
   let failures : Array (String × Float) := pairs.filterMap fun (label, a, b) =>
@@ -102,10 +104,9 @@ def main : IO Unit := do
     for (label, mx) in failures do
       IO.eprintln s!"  {label}: max |Δ| = {mx}"
     throw (IO.userError s!"FAIL: {failures.size}/{pairs.size} tensors exceed atol")
-
   IO.println ""
 
-  -- random inference: sample a name from the trained model, starting at the boundary token
+  -- inference
   let bos : Nat ← decodeField j "bos"
   let blockSize := p.wpe.rows
   let mut seed := UInt64.ofNat (← IO.monoNanosNow)

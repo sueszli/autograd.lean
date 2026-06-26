@@ -79,12 +79,12 @@ def forward (p : Params) (input target : Array Nat) (mask : Array Float) (nEmbed
 -- every role offset is < 6
 theorem Role.offset_lt (r : Role)
     : r.offset < 6 := by cases r <;> decide
+
 -- distinct roles have distinct offsets
 theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset)
     : r = r' := by cases r <;> cases r' <;> simp_all [Role.offset]
 
--- ids must be globally distinct: a collision would make `backwardAcc` sum unrelated gradients.
--- distinct slots get distinct ids (no collision, for any model size)
+-- ids are globally distinct
 theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id)
     : s = t := by
   cases s <;> cases t <;> simp_all [Slot.id]
