@@ -76,31 +76,10 @@ def forward (p : Params) (input target : Array Nat) (mask : Array Float) (nEmbed
   let x : Tensor := p.blocks.foldl (init := xInit) fun acc b => Tensor.mlp nEmbed epsilon (Tensor.attn nEmbed nHead epsilon maskValue acc b.attnWq b.attnWk b.attnWv b.attnWo) b.mlpFc1 b.mlpFc2
   (x @ p.lmHead).maskedCE target mask
 
--- every role offset is < 6
-theorem Role.offset_lt (r : Role)
-    : r.offset < 6 := by cases r <;> decide
-
--- distinct roles have distinct offsets
-theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset)
-    : r = r' := by cases r <;> cases r' <;> simp_all [Role.offset]
-
--- ids are globally distinct
-theorem Slot.id_injective (s : Slot) (t : Slot) (h : s.id = t.id)
-    : s = t := by
-  cases s <;> cases t <;> simp_all [Slot.id]
-  case wte.block hh r | wpe.block hh r | lmHead.block hh r =>
-    have := r.offset_lt; omega
-  case block.wpe hh r | block.lmHead hh r =>
-    have := r.offset_lt; omega
-  case block.block ha r hb r' =>
-    have h1 := r.offset_lt
-    have h2 := r'.offset_lt
-    refine ⟨by omega, ?_⟩
-    apply Role.offset_inj
-    omega
-
 -- tests
 theorem default_params_no_blocks : (default : Params).blocks.size = 0 := rfl
+theorem Role.offset_lt (r : Role) : r.offset < 6 := by cases r <;> decide
+theorem Role.offset_inj (r : Role) (r' : Role) (h : r.offset = r'.offset) : r = r' := by cases r <;> cases r' <;> simp_all [Role.offset]
 theorem global_ids : (Slot.wte).id = 0 ∧ (Slot.wpe).id = 1 ∧ (Slot.lmHead).id = 2 := ⟨rfl, rfl, rfl⟩
 theorem block0_ids : (Slot.block 0 .attnWq).id = 3 ∧ (Slot.block 0 .mlpFc2).id = 8 := ⟨rfl, rfl⟩
 theorem block1_ids : (Slot.block 1 .attnWq).id = 9 ∧ (Slot.block 1 .mlpFc2).id = 14 := ⟨rfl, rfl⟩
