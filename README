@@ -29,4 +29,4 @@ $ make run
     total time: 18.808s
     passed parity check
 
-    random inference (sampled name): arrwon
+    inference (random sampled name): arrwon
