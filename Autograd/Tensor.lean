@@ -201,9 +201,11 @@ theorem maddFlat_bridge {K : Type} [CommRing K] [Inhabited K] (a : Array K) (b :
 -- `matmulBwdW` is the gradient of `matmulFwd`
 theorem matmulBwdW_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ) (n : Nat) (k : Nat) (m : Nat)
     : Matrix.trace ((toMat gArr n m)ᵀ * toMat (matmulFwd x n k W m) n m) = Matrix.trace ((toMat (matmulBwdW gArr n m x k) k m)ᵀ * toMat W k m) := by rw [matmulFwd_bridge, matmulBwdW_bridge, matmulBwdW_adjoint]
+
 -- `matmulBwdX` is the gradient of `matmulFwd`
 theorem matmulBwdX_kernel_grad (x : Array ℝ) (W : Array ℝ) (gArr : Array ℝ) (n : Nat) (k : Nat) (m : Nat)
     : Matrix.trace ((toMat gArr n m)ᵀ * toMat (matmulFwd x n k W m) n m) = Matrix.trace ((toMat (matmulBwdX gArr n m W k) n k)ᵀ * toMat x n k) := by rw [matmulFwd_bridge, matmulBwdX_bridge, matmulBwdX_adjoint]
+
 -- add's gradient splits unchanged to both inputs
 theorem maddFlat_kernel_grad (a : Array ℝ) (b : Array ℝ) (gArr : Array ℝ) (rows : Nat) (cols : Nat) (ha : a.size = rows * cols)
     : Matrix.trace ((toMat gArr rows cols)ᵀ * toMat (maddFlat a b) rows cols) = Matrix.trace ((toMat gArr rows cols)ᵀ * toMat a rows cols) + Matrix.trace ((toMat gArr rows cols)ᵀ * toMat b rows cols) := by rw [maddFlat_bridge a b rows cols ha, add_adjoint]
@@ -267,8 +269,7 @@ theorem matmul_taints_grad : ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 false) @ (Tensor.
 #guard let t := (Tensor.leaf #[10, 11, 20, 21, 30, 31] 3 2 0 true).gather #[2, 0]; arrApproxEq t.data #[30, 31, 10, 11] && t.shape == #[2, 2]
 #guard arrApproxEq ((Tensor.leaf #[1, 2, 3, 4] 2 2 0 true) @ (Tensor.leaf #[1, 2, 3, 4] 2 2 1 true)).data #[7, 10, 15, 22]
 #guard let l := (Tensor.leaf #[0, 0] 1 2 0 true).maskedCE #[0] #[1]; approxEq l.data[0]! (-Float.log 0.5) && l.shape == #[1, 1]
--- proven on ℝ, run on ℚ
-#guard matmulFwd (#[1, 2, 3, 4] : Array ℚ) 2 2 #[1, 2, 3, 4] 2 == #[7, 10, 15, 22]
+#guard matmulFwd (#[1, 2, 3, 4] : Array ℚ) 2 2 #[1, 2, 3, 4] 2 == #[7, 10, 15, 22]  -- proven on ℝ, run on ℚ
 #guard matmulFwd (#[1, 2, 3, 4, 5, 6] : Array ℚ) 2 3 #[1, 2, 3, 4, 5, 6] 2 == #[22, 28, 49, 64]
 #guard maddFlat (#[1, 2, 3] : Array ℚ) #[3, 4, 5] == #[4, 6, 8]
 #guard matmulBwdX (#[1, 2, 3, 4] : Array ℚ) 2 2 #[1, 0, 0, 1] 2 == #[1, 2, 3, 4]
