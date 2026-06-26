@@ -31,8 +31,8 @@ usage:
 
     inference (random sampled name): arrwon
 
-also see:
+see also:
 
-- discussion on hackernews: https://news.ycombinator.com/item?id=...
+- discussion on hackernews: https://news.ycombinator.com/item?id=48681690
 - counterpart in c: https://github.com/sueszli/autograd.c
 - original microgpt implementation: https://karpathy.github.io/2026/02/12/microgpt/
