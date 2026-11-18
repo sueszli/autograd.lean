@@ -13,7 +13,7 @@ a functional language with a built-in proof checker.
 it follows pytorch's design principles, where tensors build a computation graph
 that backprop walks in reverse to compute gradients.
 
-three layers of correctness:
+correctness by:
 
 - a mathlib proof that each backward kernel computes the true gradient
 - numeric parity with karpathy's microGPT to within 1e-11 atol
