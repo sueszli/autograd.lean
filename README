@@ -7,8 +7,8 @@
                               ▀▀
 
 
-a reverse-mode autograd engine in lean, a functional language with a built-in
-proof checker.
+a reverse-mode autograd engine in lean,
+a functional language with a built-in proof checker.
 
 it follows pytorch's design principles, where tensors build a computation graph
 that backprop walks in reverse to compute gradients.
